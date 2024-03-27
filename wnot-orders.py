@@ -1,26 +1,30 @@
+# ChatGPT instructions:
+# write me a python script to process a csv file using pandas.
+# Command line parameters to the script should be:
+# 1) the name of input file
+# 2) the name of output file.
+# The script should do the following:
 
-""" write me a python script to process a csv file using pandas.
-Command line parameters to the script should be:
-1) the name of input file
-2) the name of output file.
-The script should do the following:
+# - rename column "product quantity" to "Quantity"
+# - rename column "product name" to "Title"
+# - rename column "product description" to "Description"
+# - rename column "sold price" to "Price"
+# - rename column "order id" to "Order ID"
+# - rename column "placed at" to "Order Time"
+# - add column "Shipping"
+# - add column "SKU" 
+# - for each row, do the following:
+#     1.   if the cell "cancelled or failed" has any text in it, delete the row
+#     2. use regular expression `[A-Za-z]\d+$` to extract value from "Description" and assign it 
+#          to "SKU" . If there's no match, assign "SKU" a value of "***"
+# - remove any columns other than   "SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
+# - write remaining data into output file
+#
+# ----------------------
+# To execute:
+# source ~/devl/venv/bin/activate" <-- do this once
+# python wnot-orders.py <in.csv> <out.csv>
 
-- rename column "product quantity" to "Quantity"
-- rename column "product name" to "Title"
-- rename column "product description" to "Description"
-- rename column "sold price" to "Price"
-- rename column "order id" to "Order ID"
-- rename column "placed at" to "Order Time"
-- add column "Shipping"
-- add column "SKU" 
-- for each row, do the following:
-    1.   if the cell "cancelled or failed" has any text in it, delete the row
-    2. use regular expression `[A-Za-z]\d+$` to extract value from "Description" and assign it 
-         to "SKU" . If there's no match, assign "SKU" a value of "***"
-- remove any columns other than   "SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
-
-- write remaining data into output file
-"""
 
 import pandas as pd
 import sys
