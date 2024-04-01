@@ -9,44 +9,47 @@ The script should do the following:
 - rename column "Lineitem quantity" to "Quantity"
 - rename column "Lineitem name" to "Title"
 - rename column "Lineitem price" to "Price"
+- rename column "Created at" to "Order Time"
 - add column "Description"
 - remove any rows where value of "Lineitem fulfillment status" is equal to "cancelled"
-- remove any columns other than  "Order ID", "SKU", "Title", "Description", "Quantity", "Price", "Shipping"
+- remove any columns other than  "SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
 - write remaining data into output file
  """
 
+import argparse
 import pandas as pd
-import sys
 
 def process_csv(input_file, output_file):
-    # Read the CSV file
+    # Read the CSV file into a DataFrame
     df = pd.read_csv(input_file)
 
     # Rename columns
-    df.rename(columns={'Lineitem sku': 'SKU',
-                       'Lineitem quantity': 'Quantity',
-                       'Lineitem name': 'Title',
-                       'Lineitem price': 'Price'}, inplace=True)
+    df = df.rename(columns={
+        "Lineitem sku": "SKU",
+        "Lineitem quantity": "Quantity",
+        "Lineitem name": "Title",
+        "Lineitem price": "Price",
+        "Created at": "Order Time"
+    })
 
     # Add Description column
-    df['Description'] = ''
+    df["Description"] = ""
 
-    # Remove rows where "Lineitem fulfillment status" is "cancelled"
-    df = df[df['Lineitem fulfillment status'] != 'cancelled']
+    # Remove rows where Lineitem fulfillment status is "cancelled"
+    df = df[df["Lineitem fulfillment status"] != "cancelled"]
 
-    # Remove unnecessary columns
-    columns_to_keep = ['Order ID', 'SKU', 'Title', 'Description', 'Quantity', 'Price', 'Shipping']
+    # Keep only specified columns
+    columns_to_keep = ["SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"]
     df = df[columns_to_keep]
 
-    # Write to output file
+    # Write remaining data to output file
     df.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python script.py input_file output_file")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Process a CSV file")
+    parser.add_argument("input_file", help="Input CSV file")
+    parser.add_argument("output_file", help="Output CSV file")
+    args = parser.parse_args()
 
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
+    process_csv(args.input_file, args.output_file)
 
-    process_csv(input_file, output_file)
