@@ -11,6 +11,7 @@ The script should do the following:
 - rename column "Sold For" to "Price"
 - rename column "Custom Label" to "SKU"
 - rename column "Sale Date" to "Order Time"
+- add column "Description" with no data 
 - rename column "Shipping And Handling" to "Shipping"
 - remove any row where "Item Number" is blank
 - remove any columns other than "SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
@@ -35,11 +36,14 @@ def process_csv(input_file, output_file):
         "Shipping And Handling": "Shipping"
     })
     
+    # Add "Description" column with no data
+    df["Description"] = ""
+    
     # Remove any row where "Item Number" is blank
     df = df.dropna(subset=["Item Number"])
     
     # Remove any columns other than specified
-    columns_to_keep = ["SKU", "Title", "Order Time", "Quantity", "Price", "Shipping", "Order ID"]
+    columns_to_keep = ["SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"]
     df = df[columns_to_keep]
     
     # Write the processed data to the output file
