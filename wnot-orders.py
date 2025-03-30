@@ -12,12 +12,10 @@
 # - rename column "order id" to "Order ID"
 # - rename column "placed at" to "Order Time"
 # - add column "Shipping"
-# - add column "SKU" 
 # - for each row, do the following:
 #     1.   if the cell "cancelled or failed" has any text in it, delete the row
-#     2. use regular expression `[A-Za-z]\d+$` to extract value from "Description" and assign it 
-#          to "SKU" . If there's no match, assign "SKU" a value of "***"
-# - remove any columns other than   "SKU", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
+  
+# - remove any columns other than   "sku", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
 # - write remaining data into output file
 #
 # ----------------------
@@ -28,44 +26,43 @@
 
 import pandas as pd
 import sys
-import re
 
 def process_csv(input_file, output_file):
-    # Read CSV
+    # Load the CSV file
     df = pd.read_csv(input_file)
-
+    
     # Rename columns
-    df = df.rename(columns={
+    rename_dict = {
         "product quantity": "Quantity",
         "product name": "Title",
         "product description": "Description",
         "sold price": "Price",
         "order id": "Order ID",
         "placed at": "Order Time"
-    })
-
-    # Add columns
-    df['Shipping'] = ''
-    df['SKU'] = ''
-
-    # Filter rows
-    df = df[df['cancelled or failed'].isnull()]
-
-    # Extract SKU
-    df['SKU'] = df['Description'].str.extract(r'([A-Za-z]\d+$)').fillna('***')
-
-    # Remove extra columns
-    df = df[['SKU', 'Title', 'Description', 'Order Time', 'Quantity', 'Price', 'Shipping', 'Order ID']]
-
-    # Write to output file
+    }
+    df.rename(columns=rename_dict, inplace=True)
+    
+    # Add 'Shipping' column
+    df["Shipping"] = ""
+    
+    # Remove rows where 'cancelled or failed' has any text
+    if "cancelled or failed" in df.columns:
+        df = df[df["cancelled or failed"].isna()]
+    
+    # Keep only required columns
+    required_columns = ["sku", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"]
+    df = df[required_columns]
+    
+    # Save to output file
     df.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python script.py input_file output_file")
+        print("Usage: python script.py <input_file> <output_file>")
         sys.exit(1)
-
+    
     input_file = sys.argv[1]
     output_file = sys.argv[2]
-
+    
     process_csv(input_file, output_file)
+
