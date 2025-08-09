@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class SquarespaceImageUploader:
-    def __init__(self, dry_run=False, icloud_path=None):
+    def __init__(self, dry_run=False, icloud_path=None, cache_filename="squarespace_products_cache.json", force_refresh=False):
         self.api_key = SQUARESPACE_API_KEY
         self.site_id = SQUARESPACE_SITE_ID
         self.base_url = f"https://api.squarespace.com/1.0/commerce/products"
@@ -46,6 +46,8 @@ class SquarespaceImageUploader:
         }
         self.dry_run = dry_run
         self.icloud_path = icloud_path or ICLOUD_FOLDER_PATH
+        self.cache_filename = cache_filename
+        self.force_refresh = force_refresh
         
         # Rate limiting setup
         self.requests_per_minute = REQUESTS_PER_MINUTE
@@ -132,10 +134,111 @@ class SquarespaceImageUploader:
         return all_products
 
     def _get_cached_products(self) -> List[Dict]:
-        """Get products from cache, fetching if not cached"""
+        """Get products from cache (file or memory), fetching if not cached"""
         if self._products_cache is None:
-            self._products_cache = self.get_products()
+            # Check if we should use file cache or download fresh
+            self._products_cache = self._get_products_with_file_cache()
         return self._products_cache
+
+    def _get_products_with_file_cache(self) -> List[Dict]:
+        """Get products using file cache with user prompting for refresh"""
+        cache_age = self._get_cache_file_age()
+        
+        if self.force_refresh:
+            # Force refresh was requested, download unconditionally
+            logger.info("🔄 Force refresh requested, downloading fresh inventory from Squarespace...")
+            products = self.get_products()
+            self._save_products_to_cache(products)
+            return products
+        elif cache_age is None:
+            # No cache file exists, download unconditionally
+            logger.info("📥 No cached inventory found, downloading from Squarespace...")
+            products = self.get_products()
+            self._save_products_to_cache(products)
+            return products
+        else:
+            # Cache file exists, prompt user
+            age_str = self._format_age(cache_age)
+            print(f"\n📁 Found cached inventory file: {self.cache_filename}")
+            print(f"🕐 Cache age: {age_str} old")
+            
+            while True:
+                response = input("\n🔄 Download fresh inventory from Squarespace? (y/n): ").strip().lower()
+                if response in ['y', 'yes']:
+                    logger.info("📥 Downloading fresh inventory from Squarespace...")
+                    products = self.get_products()
+                    self._save_products_to_cache(products)
+                    return products
+                elif response in ['n', 'no']:
+                    logger.info("📂 Using cached inventory...")
+                    return self._load_products_from_cache()
+                else:
+                    print("Please enter 'y' or 'n'")
+
+    def _get_cache_file_age(self) -> Optional[timedelta]:
+        """Get the age of the cache file"""
+        if not os.path.exists(self.cache_filename):
+            return None
+        
+        file_mtime = os.path.getmtime(self.cache_filename)
+        file_time = datetime.fromtimestamp(file_mtime)
+        return datetime.now() - file_time
+
+    def _format_age(self, age: timedelta) -> str:
+        """Format age in human-readable format"""
+        if age.days > 0:
+            hours = age.seconds // 3600
+            if hours > 0:
+                return f"{age.days} day{'s' if age.days != 1 else ''}, {hours} hour{'s' if hours != 1 else ''}"
+            else:
+                return f"{age.days} day{'s' if age.days != 1 else ''}"
+        elif age.seconds >= 3600:
+            hours = age.seconds // 3600
+            minutes = (age.seconds % 3600) // 60
+            if minutes > 0:
+                return f"{hours} hour{'s' if hours != 1 else ''}, {minutes} minute{'s' if minutes != 1 else ''}"
+            else:
+                return f"{hours} hour{'s' if hours != 1 else ''}"
+        else:
+            minutes = age.seconds // 60
+            return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
+    def _save_products_to_cache(self, products: List[Dict]):
+        """Save products to cache file"""
+        try:
+            cache_data = {
+                'timestamp': datetime.now().isoformat(),
+                'products': products,
+                'count': len(products)
+            }
+            
+            with open(self.cache_filename, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"💾 Saved {len(products)} products to cache file: {self.cache_filename}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save cache file: {e}")
+            # Continue without caching rather than failing completely
+
+    def _load_products_from_cache(self) -> List[Dict]:
+        """Load products from cache file"""
+        try:
+            with open(self.cache_filename, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            products = cache_data.get('products', [])
+            count = cache_data.get('count', len(products))
+            timestamp = cache_data.get('timestamp', 'unknown')
+            
+            logger.info(f"📂 Loaded {count} products from cache (saved: {timestamp})")
+            return products
+            
+        except Exception as e:
+            logger.error(f"Failed to load cache file: {e}")
+            # Fall back to downloading fresh
+            logger.info("📥 Falling back to downloading fresh inventory...")
+            return self.get_products()
 
     def _build_sku_lookup(self) -> Dict[str, List[Dict]]:
         """Build a fast lookup dictionary for SKU searches"""
@@ -387,11 +490,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                                    # Normal upload mode
+  %(prog)s                                    # Normal upload mode (prompts for cache refresh)
   %(prog)s --dry-run                          # Show what would be uploaded without making changes
   %(prog)s -d                                 # Short form for dry run
+  %(prog)s --force-refresh                    # Force download fresh inventory without prompting
+  %(prog)s -f                                 # Short form for force refresh
   %(prog)s --icloud-path /path/to/folder      # Specify custom iCloud folder path
-  %(prog)s --dry-run --icloud-path /path/to/folder  # Combine options
+  %(prog)s --dry-run --force-refresh          # Combine dry run with forced refresh
         """
     )
     parser.add_argument(
@@ -413,6 +518,11 @@ Examples:
         '--debug-sku',
         type=str,
         help='Debug a specific SKU to see its current images and structure'
+    )
+    parser.add_argument(
+        '--force-refresh', '-f',
+        action='store_true',
+        help='Force download fresh inventory without prompting (ignores cache)'
     )
     
     args = parser.parse_args()
@@ -439,7 +549,7 @@ Examples:
         sys.exit(1)
     
     # Create uploader instance
-    uploader = SquarespaceImageUploader(dry_run=args.dry_run, icloud_path=icloud_path)
+    uploader = SquarespaceImageUploader(dry_run=args.dry_run, icloud_path=icloud_path, force_refresh=args.force_refresh)
     
     # Handle debug options
     if args.list_skus:
