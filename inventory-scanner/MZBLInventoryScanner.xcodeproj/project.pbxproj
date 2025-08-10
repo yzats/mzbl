@@ -7,33 +7,33 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1234567890123456789001F /* MZBLInventoryScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789001E /* MZBLInventoryScannerApp.swift */; };
-		A1234567890123456789002F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789002E /* ContentView.swift */; };
-		A1234567890123456789003F /* BarcodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789003E /* BarcodeScannerView.swift */; };
-		A1234567890123456789004F /* PhotoSelectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789004E /* PhotoSelectorView.swift */; };
-		A1234567890123456789005F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789005E /* SettingsView.swift */; };
-		A1234567890123456789006F /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789006E /* AppSettings.swift */; };
-		A1234567890123456789007F /* FileManager+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789007E /* FileManager+Extensions.swift */; };
-		A1234567890123456789008F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789008E /* Assets.xcassets */; };
-		A1234567890123456789009F /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789009E /* Preview Assets.xcassets */; };
+		A12345678901234567890001 /* MZBLInventoryScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12345678901234567890002 /* MZBLInventoryScannerApp.swift */; };
+		A12345678901234567890003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12345678901234567890004 /* ContentView.swift */; };
+		A12345678901234567890005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A12345678901234567890006 /* Assets.xcassets */; };
+		A12345678901234567890007 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A12345678901234567890008 /* Preview Assets.xcassets */; };
+		A12345678901234567890009 /* BarcodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789000A /* BarcodeScannerView.swift */; };
+		A1234567890123456789000B /* PhotoSelectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789000C /* PhotoSelectorView.swift */; };
+		A1234567890123456789000D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1234567890123456789000E /* SettingsView.swift */; };
+		A1234567890123456789000F /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12345678901234567890010 /* AppSettings.swift */; };
+		A12345678901234567890011 /* FileManager+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12345678901234567890012 /* FileManager+Extensions.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		A1234567890123456789001B /* MZBLInventoryScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MZBLInventoryScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1234567890123456789001E /* MZBLInventoryScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MZBLInventoryScannerApp.swift; sourceTree = "<group>"; };
-		A1234567890123456789002E /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		A1234567890123456789003E /* BarcodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeScannerView.swift; sourceTree = "<group>"; };
-		A1234567890123456789004E /* PhotoSelectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSelectorView.swift; sourceTree = "<group>"; };
-		A1234567890123456789005E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		A1234567890123456789006E /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
-		A1234567890123456789007E /* FileManager+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileManager+Extensions.swift"; sourceTree = "<group>"; };
-		A1234567890123456789008E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A1234567890123456789009E /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
-		A123456789012345678900AE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A12345678901234567890002 /* MZBLInventoryScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MZBLInventoryScannerApp.swift; sourceTree = "<group>"; };
+		A12345678901234567890004 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A12345678901234567890006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A12345678901234567890008 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		A1234567890123456789000A /* BarcodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarcodeScannerView.swift; sourceTree = "<group>"; };
+		A1234567890123456789000C /* PhotoSelectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSelectorView.swift; sourceTree = "<group>"; };
+		A1234567890123456789000E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A12345678901234567890010 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		A12345678901234567890012 /* FileManager+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileManager+Extensions.swift"; sourceTree = "<group>"; };
+		A12345678901234567890013 /* MZBLInventoryScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MZBLInventoryScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A12345678901234567890014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A1234567890123456789001A /* Frameworks */ = {
+		A12345678901234567890015 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -43,57 +43,57 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A1234567890123456789001C /* MZBLInventoryScanner */ = {
+		A12345678901234567890016 = {
 			isa = PBXGroup;
 			children = (
-				A123456789012345678900AE /* Info.plist */,
-				A1234567890123456789001E /* MZBLInventoryScannerApp.swift */,
-				A1234567890123456789002E /* ContentView.swift */,
-				A1234567890123456789003E /* BarcodeScannerView.swift */,
-				A1234567890123456789004E /* PhotoSelectorView.swift */,
-				A1234567890123456789005E /* SettingsView.swift */,
-				A1234567890123456789006E /* AppSettings.swift */,
-				A1234567890123456789007E /* FileManager+Extensions.swift */,
-				A1234567890123456789008E /* Assets.xcassets */,
-				A123456789012345678900AD /* Preview Content */,
+				A12345678901234567890017 /* MZBLInventoryScanner */,
+				A12345678901234567890018 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A12345678901234567890017 /* MZBLInventoryScanner */ = {
+			isa = PBXGroup;
+			children = (
+				A12345678901234567890002 /* MZBLInventoryScannerApp.swift */,
+				A12345678901234567890004 /* ContentView.swift */,
+				A1234567890123456789000A /* BarcodeScannerView.swift */,
+				A1234567890123456789000C /* PhotoSelectorView.swift */,
+				A1234567890123456789000E /* SettingsView.swift */,
+				A12345678901234567890010 /* AppSettings.swift */,
+				A12345678901234567890012 /* FileManager+Extensions.swift */,
+				A12345678901234567890006 /* Assets.xcassets */,
+				A12345678901234567890014 /* Info.plist */,
+				A12345678901234567890019 /* Preview Content */,
 			);
 			path = MZBLInventoryScanner;
 			sourceTree = "<group>";
 		};
-		A123456789012345678900AD /* Preview Content */ = {
+		A12345678901234567890018 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A1234567890123456789009E /* Preview Assets.xcassets */,
-			);
-			path = "Preview Content";
-			sourceTree = "<group>";
-		};
-		A1234567890123456789001D /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				A1234567890123456789001B /* MZBLInventoryScanner.app */,
+				A12345678901234567890013 /* MZBLInventoryScanner.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		A123456789012345678900AC /* */ = {
+		A12345678901234567890019 /* Preview Content */ = {
 			isa = PBXGroup;
 			children = (
-				A1234567890123456789001C /* MZBLInventoryScanner */,
-				A1234567890123456789001D /* Products */,
+				A12345678901234567890008 /* Preview Assets.xcassets */,
 			);
+			path = "Preview Content";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A123456789012345678900BA /* MZBLInventoryScanner */ = {
+		A1234567890123456789001A /* MZBLInventoryScanner */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A123456789012345678900BB /* Build configuration list for PBXNativeTarget "MZBLInventoryScanner" */;
+			buildConfigurationList = A1234567890123456789001B /* Build configuration list for PBXNativeTarget "MZBLInventoryScanner" */;
 			buildPhases = (
-				A1234567890123456789001A /* Frameworks */,
-				A1234567890123456789001F /* Sources */,
-				A1234567890123456789002A /* Resources */,
+				A12345678901234567890015 /* Frameworks */,
+				A1234567890123456789001C /* Sources */,
+				A1234567890123456789001D /* Resources */,
 			);
 			buildRules = (
 			);
@@ -101,25 +101,25 @@
 			);
 			name = MZBLInventoryScanner;
 			productName = MZBLInventoryScanner;
-			productReference = A1234567890123456789001B /* MZBLInventoryScanner.app */;
+			productReference = A12345678901234567890013 /* MZBLInventoryScanner.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		A123456789012345678900AB /* Project object */ = {
+		A1234567890123456789001E /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
-					A123456789012345678900BA = {
+					A1234567890123456789001A = {
 						CreatedOnToolsVersion = 15.0;
 					};
 				};
 			};
-			buildConfigurationList = A123456789012345678900BC /* Build configuration list for PBXProject "MZBLInventoryScanner" */;
+			buildConfigurationList = A1234567890123456789001F /* Build configuration list for PBXProject "MZBLInventoryScanner" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -127,47 +127,47 @@
 				en,
 				Base,
 			);
-			mainGroup = A123456789012345678900AC /* */;
-			productRefGroup = A1234567890123456789001D /* Products */;
+			mainGroup = A12345678901234567890016;
+			productRefGroup = A12345678901234567890018 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A123456789012345678900BA /* MZBLInventoryScanner */,
+				A1234567890123456789001A /* MZBLInventoryScanner */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A1234567890123456789002A /* Resources */ = {
+		A1234567890123456789001D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1234567890123456789009F /* Preview Assets.xcassets in Resources */,
-				A1234567890123456789008F /* Assets.xcassets in Resources */,
+				A12345678901234567890007 /* Preview Assets.xcassets in Resources */,
+				A12345678901234567890005 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A1234567890123456789001F /* Sources */ = {
+		A1234567890123456789001C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1234567890123456789002F /* ContentView.swift in Sources */,
-				A1234567890123456789003F /* BarcodeScannerView.swift in Sources */,
-				A1234567890123456789004F /* PhotoSelectorView.swift in Sources */,
-				A1234567890123456789005F /* SettingsView.swift in Sources */,
-				A1234567890123456789006F /* AppSettings.swift in Sources */,
-				A1234567890123456789007F /* FileManager+Extensions.swift in Sources */,
-				A1234567890123456789001F /* MZBLInventoryScannerApp.swift in Sources */,
+				A12345678901234567890003 /* ContentView.swift in Sources */,
+				A12345678901234567890001 /* MZBLInventoryScannerApp.swift in Sources */,
+				A12345678901234567890009 /* BarcodeScannerView.swift in Sources */,
+				A1234567890123456789000B /* PhotoSelectorView.swift in Sources */,
+				A1234567890123456789000D /* SettingsView.swift in Sources */,
+				A1234567890123456789000F /* AppSettings.swift in Sources */,
+				A12345678901234567890011 /* FileManager+Extensions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		A123456789012345678900BD /* Debug */ = {
+		A12345678901234567890020 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -230,7 +230,7 @@
 			};
 			name = Debug;
 		};
-		A123456789012345678900BE /* Release */ = {
+		A12345678901234567890021 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -286,7 +286,7 @@
 			};
 			name = Release;
 		};
-		A123456789012345678900BF /* Debug */ = {
+		A12345678901234567890022 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -294,6 +294,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"MZBLInventoryScanner/Preview Content\"";
+				DEVELOPMENT_TEAM = 8MDD26W4JA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MZBLInventoryScanner/Info.plist;
@@ -317,7 +318,7 @@
 			};
 			name = Debug;
 		};
-		A123456789012345678900C0 /* Release */ = {
+		A12345678901234567890023 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -325,6 +326,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"MZBLInventoryScanner/Preview Content\"";
+				DEVELOPMENT_TEAM = 8MDD26W4JA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MZBLInventoryScanner/Info.plist;
@@ -351,25 +353,25 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A123456789012345678900BB /* Build configuration list for PBXNativeTarget "MZBLInventoryScanner" */ = {
+		A1234567890123456789001B /* Build configuration list for PBXNativeTarget "MZBLInventoryScanner" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A123456789012345678900BF /* Debug */,
-				A123456789012345678900C0 /* Release */,
+				A12345678901234567890022 /* Debug */,
+				A12345678901234567890023 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A123456789012345678900BC /* Build configuration list for PBXProject "MZBLInventoryScanner" */ = {
+		A1234567890123456789001F /* Build configuration list for PBXProject "MZBLInventoryScanner" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A123456789012345678900BD /* Debug */,
-				A123456789012345678900BE /* Release */,
+				A12345678901234567890020 /* Debug */,
+				A12345678901234567890021 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = A123456789012345678900AB /* Project object */;
+	rootObject = A1234567890123456789001E /* Project object */;
 }
