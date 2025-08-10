@@ -23,15 +23,7 @@ from typing import List, Dict, Optional, Tuple
 import logging
 from config import SQUARESPACE_API_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES, RETRY_DELAY
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('squarespace_upload.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# Note: Logging will be configured in main() after parsing command line args
 logger = logging.getLogger(__name__)
 
 class SquarespaceImageUploader:
@@ -57,6 +49,14 @@ class SquarespaceImageUploader:
         # Cache for products
         self._products_cache = None
         self._sku_lookup = None
+        
+        # Statistics tracking
+        self.stats = {
+            'products_successfully_updated': 0,
+            'skus_not_found': [],
+            'skus_no_photos': [],
+            'skus_other_reasons': []  # List of tuples (sku, reason)
+        }
         
         if dry_run:
             logger.info("🔍 DRY RUN MODE: No changes will be made to Squarespace")
@@ -409,11 +409,14 @@ class SquarespaceImageUploader:
             
             # Check if SKU folder has more than the maximum allowed images
             if MAX_IMAGES_PER_SKU_FOLDER > 0 and len(image_files) > MAX_IMAGES_PER_SKU_FOLDER:
-                logger.info(f"Skipping {sku}: SKU folder contains {len(image_files)} images (maximum allowed: {MAX_IMAGES_PER_SKU_FOLDER})")
+                reason = f"SKU folder contains {len(image_files)} images (maximum allowed: {MAX_IMAGES_PER_SKU_FOLDER})"
+                logger.info(f"Skipping {sku}: {reason}")
+                self.stats['skus_other_reasons'].append((sku, reason))
                 continue
             
             if not image_files:
                 logger.warning(f"No image files found in {sku_folder}")
+                self.stats['skus_no_photos'].append(sku)
                 continue
             
             # Sort images by number extracted from end of filename
@@ -433,12 +436,14 @@ class SquarespaceImageUploader:
             product = self.get_product_by_sku(sku)
             if not product:
                 logger.warning(f"Product with SKU {sku} not found on Squarespace")
+                self.stats['skus_not_found'].append(sku)
                 continue
             
             # Check if we should skip this product
             should_skip, reason = self.should_skip_product(product)
             if should_skip:
                 logger.info(f"Skipping {sku}: {reason}")
+                self.stats['skus_other_reasons'].append((sku, reason))
                 continue
             
             # Upload images
@@ -448,6 +453,9 @@ class SquarespaceImageUploader:
             for image_file in image_files:
                 if self.upload_image(product_id, image_file):
                     successful_uploads += 1
+            
+            if successful_uploads > 0:
+                self.stats['products_successfully_updated'] += 1
             
             if self.dry_run:
                 logger.info(f"[DRY RUN] Would upload {successful_uploads}/{len(image_files)} images for SKU {sku}")
@@ -481,6 +489,47 @@ class SquarespaceImageUploader:
         
         for date_folder in date_folders:
             self.process_date_folder(date_folder)
+    
+    def print_summary(self) -> None:
+        """Print a comprehensive summary of the processing results"""
+        logger.info("\n" + "="*60)
+        logger.info("📊 PROCESSING SUMMARY")
+        logger.info("="*60)
+        
+        # Summary statistics
+        logger.info(f"✅ Products successfully updated: {self.stats['products_successfully_updated']}")
+        
+        # SKUs not found on SQS
+        if self.stats['skus_not_found']:
+            logger.info(f"❌ SKUs not found on Squarespace ({len(self.stats['skus_not_found'])}):")
+            for sku in self.stats['skus_not_found']:
+                logger.info(f"   • {sku}")
+        else:
+            logger.info("✅ All processed SKUs were found on Squarespace")
+        
+        # SKUs with no photos
+        if self.stats['skus_no_photos']:
+            logger.info(f"📷 SKUs with no photos ({len(self.stats['skus_no_photos'])}):")
+            for sku in self.stats['skus_no_photos']:
+                logger.info(f"   • {sku}")
+        else:
+            logger.info("✅ All processed SKUs had photos available")
+        
+        # SKUs skipped for other reasons
+        if self.stats['skus_other_reasons']:
+            logger.info(f"⚠️ SKUs not processed for other reasons ({len(self.stats['skus_other_reasons'])}):")
+            for sku, reason in self.stats['skus_other_reasons']:
+                logger.info(f"   • {sku}: {reason}")
+        else:
+            logger.info("✅ No SKUs were skipped for other reasons")
+        
+        # Total counts
+        total_processed = len(self.stats['skus_not_found']) + len(self.stats['skus_no_photos']) + len(self.stats['skus_other_reasons']) + self.stats['products_successfully_updated']
+        if total_processed > 0:
+            success_rate = (self.stats['products_successfully_updated'] / total_processed) * 100
+            logger.info(f"\n📈 Overall success rate: {success_rate:.1f}% ({self.stats['products_successfully_updated']}/{total_processed})")
+        
+        logger.info("="*60)
 
 def main():
     """Main function to run the image upload process"""
@@ -495,7 +544,9 @@ Examples:
   %(prog)s -d                                 # Short form for dry run
   %(prog)s --force-refresh                    # Force download fresh inventory without prompting
   %(prog)s -f                                 # Short form for force refresh
-  %(prog)s --icloud-path /path/to/folder      # Specify custom iCloud folder path
+  %(prog)s --path /path/to/folder             # Specify custom folder path
+  %(prog)s --log mylog.log                    # Log output to custom file
+  %(prog)s -l mylog.log                       # Short form for custom log file
   %(prog)s --dry-run --force-refresh          # Combine dry run with forced refresh
         """
     )
@@ -505,15 +556,11 @@ Examples:
         help='Show what would be uploaded without making any changes to Squarespace'
     )
     parser.add_argument(
-        '--icloud-path', '-p',
+        '--path', '-p',
         type=str,
-        help='Path to the iCloud folder (overrides config.py setting)'
+        help='Path to the folder (overrides config.py setting)'
     )
-    parser.add_argument(
-        '--list-skus', '-l',
-        action='store_true',
-        help='List all products and their SKUs for debugging'
-    )
+
     parser.add_argument(
         '--debug-sku',
         type=str,
@@ -524,8 +571,25 @@ Examples:
         action='store_true',
         help='Force download fresh inventory without prompting (ignores cache)'
     )
+    parser.add_argument(
+        '--log', '-l',
+        type=str,
+        help='Log output to specified file (default: squarespace_upload.log)'
+    )
     
     args = parser.parse_args()
+    
+    # Configure logging based on command line arguments
+    log_file = args.log if args.log else 'squarespace_upload.log'
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ],
+        force=True  # Reconfigure if already configured
+    )
     
     if args.dry_run:
         logger.info("🔍 Starting Squarespace Image Upload Process (DRY RUN MODE)")
@@ -542,20 +606,16 @@ Examples:
         sys.exit(1)
     
     # Determine which iCloud path to use
-    icloud_path = args.icloud_path if args.icloud_path else ICLOUD_FOLDER_PATH
+    icloud_path = args.path if args.path else ICLOUD_FOLDER_PATH
     
     if not icloud_path:
-        logger.error("ICLOUD_FOLDER_PATH not configured in config.py and no --icloud-path provided")
+        logger.error("ICLOUD_FOLDER_PATH not configured in config.py and no --path provided")
         sys.exit(1)
     
     # Create uploader instance
     uploader = SquarespaceImageUploader(dry_run=args.dry_run, icloud_path=icloud_path, force_refresh=args.force_refresh)
     
     # Handle debug options
-    if args.list_skus:
-        uploader.list_all_skus()
-        return
-    
     if args.debug_sku:
         product = uploader.get_product_by_sku(args.debug_sku)
         if product:
@@ -566,6 +626,9 @@ Examples:
     
     # Process the upload
     uploader.process_icloud_folder()
+    
+    # Print summary
+    uploader.print_summary()
     
     if args.dry_run:
         logger.info("🔍 Squarespace Image Upload Process completed (DRY RUN MODE)")

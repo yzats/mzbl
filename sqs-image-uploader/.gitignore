@@ -1,6 +1,9 @@
 # Configuration files with sensitive data
 config.py
 
+# Inventory Cache
+squarespace_products_cache.json
+
 # Log files
 *.log
 squarespace_upload.log
