@@ -1,6 +1,82 @@
 import SwiftUI
-import PhotosUI
 import Photos
+
+struct PhotoThumbnailView: View {
+    let asset: PHAsset
+    let isSelected: Bool
+    @Binding var thumbnails: [String: UIImage]
+    let onTap: () -> Void
+    
+    var body: some View {
+        ZStack {
+            if let thumbnail = thumbnails[asset.localIdentifier] {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 100, height: 100)
+                    .clipped()
+            } else {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 100, height: 100)
+                    .overlay(
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    )
+                    .onAppear {
+                        loadThumbnail(for: asset)
+                    }
+            }
+            
+            // Selection overlay
+            if isSelected {
+                Rectangle()
+                    .fill(Color.blue.opacity(0.3))
+                    .frame(width: 100, height: 100)
+                
+                VStack {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.blue)
+                            .background(Color.white)
+                            .clipShape(Circle())
+                            .padding(4)
+                    }
+                    Spacer()
+                }
+                .frame(width: 100, height: 100)
+            }
+        }
+        .cornerRadius(8)
+        .contentShape(Rectangle()) // Ensures entire area is tappable
+        .onTapGesture {
+            onTap()
+        }
+    }
+    
+    private func loadThumbnail(for asset: PHAsset) {
+        let manager = PHImageManager.default()
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.resizeMode = .fast
+        options.isSynchronous = false
+        options.isNetworkAccessAllowed = true
+        
+        manager.requestImage(
+            for: asset,
+            targetSize: CGSize(width: 200, height: 200), // Increased size for better quality
+            contentMode: .aspectFill,
+            options: options
+        ) { image, _ in
+            if let image = image {
+                DispatchQueue.main.async {
+                    thumbnails[asset.localIdentifier] = image
+                }
+            }
+        }
+    }
+}
 
 struct PhotoSelectorView: View {
     let scannedSKU: String
@@ -9,129 +85,265 @@ struct PhotoSelectorView: View {
     @EnvironmentObject var appSettings: AppSettings
     @State private var selectedImages: [PHAsset] = []
     @State private var allPhotos: [PHAsset] = []
+    @State private var thumbnails: [String: UIImage] = [:]
     @State private var showingAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
+    @State private var alertAction: (() -> Void)? = nil
     @State private var isProcessing = false
-    @State private var showingExistingPhotosAlert = false
+    @State private var existingPhotosCount = 0
+    @State private var existingPhotosDate = ""
+    @State private var showingToast = false
+    @State private var toastMessage = ""
+    @State private var isCheckingExistingPhotos = false
     
     private let imageManager = PHImageManager.default()
     private let imageRequestOptions: PHImageRequestOptions = {
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
+        options.resizeMode = .exact
+        options.isSynchronous = false
         options.isNetworkAccessAllowed = true
         return options
     }()
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Fixed SKU header
-                VStack {
-                    Text("SKU: \(scannedSKU)")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color(.systemGray6))
-                }
+        VStack(spacing: 0) {
+            // Fixed header with SKU
+            VStack(spacing: 8) {
+                Text("SKU: \(scannedSKU)")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.horizontal)
                 
-                // Photo gallery
-                if allPhotos.isEmpty {
-                    VStack {
-                        Spacer()
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 50))
-                            .foregroundColor(.gray)
-                        Text("No photos available")
-                            .font(.headline)
-                            .foregroundColor(.gray)
-                        Text("Grant photo library access to select photos")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        Spacer()
-                    }
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
-                            ForEach(allPhotos.indices, id: \.self) { index in
-                                PhotoThumbnailView(
-                                    asset: allPhotos[index],
-                                    isSelected: selectedImages.contains(allPhotos[index]),
-                                    imageManager: imageManager,
-                                    imageRequestOptions: imageRequestOptions
-                                ) {
-                                    toggleSelection(allPhotos[index])
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 1)
-                    }
-                }
-                
-                // Fixed bottom buttons
-                VStack {
-                    if !selectedImages.isEmpty {
-                        Text("\(selectedImages.count) photo\(selectedImages.count == 1 ? "" : "s") selected")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .padding(.top, 8)
-                    }
+                Text("\(selectedImages.count) of \(allPhotos.count) photos selected")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity)
+            .background(Color(.systemBackground))
+            .overlay(
+                Rectangle()
+                    .frame(height: 0.5)
+                    .foregroundColor(Color(.separator)),
+                alignment: .bottom
+            )
+            
+            // Scrollable photo gallery
+            if allPhotos.isEmpty {
+                // Empty state
+                VStack(spacing: 20) {
+                    Spacer()
                     
-                    HStack(spacing: 20) {
-                        Button("Cancel") {
-                            onComplete()
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color(.systemGray5))
-                        .foregroundColor(.primary)
-                        .cornerRadius(8)
-                        
-                        Button("OK") {
-                            processSelectedPhotos()
-                        }
-                        .disabled(selectedImages.isEmpty || isProcessing)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(selectedImages.isEmpty ? Color(.systemGray4) : Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                        .overlay(
-                            Group {
-                                if isProcessing {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(0.8)
-                                }
-                            }
-                        )
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.system(size: 50))
+                        .foregroundColor(.secondary)
+                    
+                    Text("No photos available")
+                        .font(.title2)
+                        .fontWeight(.medium)
+                    
+                    Text("Add photos to your photo library to get started")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    
+                    Button("Reload") {
+                        requestPhotoLibraryAccess()
                     }
-                    .padding()
+                    .buttonStyle(.borderedProminent)
+                    
+                    Spacer()
                 }
+                .padding()
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [
+                        GridItem(.adaptive(minimum: 100), spacing: 2)
+                    ], spacing: 2) {
+                        ForEach(allPhotos, id: \.localIdentifier) { asset in
+                            PhotoThumbnailView(
+                                asset: asset,
+                                isSelected: selectedImages.contains(asset),
+                                thumbnails: $thumbnails
+                            ) {
+                                toggleSelection(asset)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 80) // Space for fixed bottom buttons
+                }
+            }
+            
+            // Fixed bottom buttons
+            VStack(spacing: 0) {
+                Rectangle()
+                    .frame(height: 0.5)
+                    .foregroundColor(Color(.separator))
+                
+                HStack(spacing: 20) {
+                    Button(action: {
+                        onComplete()
+                    }) {
+                        Text("Cancel")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44) // Ensure minimum touch target
+                            .background(Color(.systemGray5))
+                            .foregroundColor(.primary)
+                            .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle()) // Remove default button styling
+                    
+                    Button(action: {
+                        copyPhotosToDestination()
+                    }) {
+                        Text("OK")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44) // Ensure minimum touch target
+                            .background(selectedImages.isEmpty ? Color(.systemGray4) : Color.accentColor)
+                            .foregroundColor(selectedImages.isEmpty ? Color(.systemGray2) : .white)
+                            .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle()) // Remove default button styling
+                    .disabled(selectedImages.isEmpty || isProcessing)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
                 .background(Color(.systemBackground))
             }
-            .navigationTitle("Select Photos")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarHidden(false)
         }
+        .overlay(
+            // Toast notification
+            VStack {
+                if showingToast {
+                    Text(toastMessage)
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.black.opacity(0.8))
+                        .cornerRadius(8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(1)
+                }
+                Spacer()
+            }
+            .padding(.top, 50)
+            .animation(.easeInOut(duration: 0.3), value: showingToast)
+        )
         .onAppear {
-            requestPhotoLibraryAccess()
+            checkForExistingPhotos()
         }
         .alert(alertTitle, isPresented: $showingAlert) {
-            Button("OK") { }
+            Button("OK") {
+                alertAction?()
+            }
         } message: {
             Text(alertMessage)
         }
-        .alert("Photos Already Exist", isPresented: $showingExistingPhotosAlert) {
-            Button("Cancel") { }
-            Button("Proceed") {
-                copyPhotosToDestination()
+    }
+    
+    private func checkForExistingPhotos() {
+        // Prevent multiple simultaneous checks
+        guard !isCheckingExistingPhotos else {
+            print("📁 Already checking existing photos, skipping...")
+            return
+        }
+        
+        isCheckingExistingPhotos = true
+        print("📁 Starting existing photos check for SKU: \(scannedSKU)")
+        
+        // Run this check in background to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Restore access to security-scoped resource before checking
+            let hasAccess = self.restoreSecurityScopedAccess()
+            if !hasAccess {
+                // If we can't access the folder, just proceed with photo selection
+                // The error will be shown when user tries to save
+                DispatchQueue.main.async {
+                    self.isCheckingExistingPhotos = false
+                    self.requestPhotoLibraryAccess()
+                }
+                return
             }
-        } message: {
-            Text("Photos for this SKU already exist in the destination folder. Do you want to proceed?")
+        
+            let inventoryFolderURL = URL(fileURLWithPath: self.appSettings.expandedInventoryPath)
+            
+            // Check if inventory folder exists
+            guard FileManager.default.fileExists(atPath: inventoryFolderURL.path) else {
+                // No inventory folder exists, proceed normally
+                DispatchQueue.main.async {
+                    self.isCheckingExistingPhotos = false
+                    self.requestPhotoLibraryAccess()
+                }
+                return
+            }
+        
+        do {
+            // Get all contents of inventory folder (all date folders)
+            let inventoryContents = try FileManager.default.contentsOfDirectory(at: inventoryFolderURL, includingPropertiesForKeys: [.isDirectoryKey])
+            print("📁 Checking \(inventoryContents.count) items in inventory folder")
+            
+            // Filter for directories that match date format (MM-DD-YYYY)
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "MM-dd-yyyy"
+            
+            for dateFolder in inventoryContents {
+                do {
+                    // Check if it's a directory
+                    var isDirectory: ObjCBool = false
+                    guard FileManager.default.fileExists(atPath: dateFolder.path, isDirectory: &isDirectory),
+                          isDirectory.boolValue else { continue }
+                    
+                    let dateFolderName = dateFolder.lastPathComponent
+                    
+                    // Validate date format (optional - helps filter out non-date folders)
+                    guard dateFolderName.count == 10 && dateFolderName.contains("-") else { continue }
+                    
+                    // Check for SKU folder inside this date folder
+                    let skuFolderURL = dateFolder.appendingPathComponent(scannedSKU)
+                    
+                    guard FileManager.default.fileExists(atPath: skuFolderURL.path) else { continue }
+                    
+                    // Count image files in the SKU folder
+                    let skuContents = try FileManager.default.contentsOfDirectory(at: skuFolderURL, includingPropertiesForKeys: nil)
+                    
+                    // Filter for image files (common extensions)
+                    let imageExtensions = ["jpg", "jpeg", "png", "heic", "heif"]
+                    let imageFiles = skuContents.filter { url in
+                        imageExtensions.contains(url.pathExtension.lowercased())
+                    }
+                    
+                    if imageFiles.count > 0 {
+                        print("⚠️ Found \(imageFiles.count) existing photos for SKU \(self.scannedSKU) in \(dateFolderName)")
+                        // Found existing photos, show warning on main thread
+                        DispatchQueue.main.async {
+                            self.isCheckingExistingPhotos = false
+                            self.showExistingPhotosAlert(count: imageFiles.count, date: dateFolderName)
+                        }
+                        return
+                    }
+                } catch {
+                    print("⚠️ Error checking date folder \(dateFolder.lastPathComponent): \(error)")
+                    // Continue checking other folders even if one fails
+                    continue
+                }
+            }
+            print("✅ No existing photos found for SKU \(self.scannedSKU)")
+        } catch {
+            print("❌ Error checking existing photos: \(error)")
+            // On error, proceed with photo selection anyway
+        }
+        
+        // No existing photos found across all dates, proceed normally
+        DispatchQueue.main.async {
+            self.isCheckingExistingPhotos = false
+            self.requestPhotoLibraryAccess()
+        }
         }
     }
     
@@ -144,16 +356,27 @@ struct PhotoSelectorView: View {
     }
     
     private func requestPhotoLibraryAccess() {
+        let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        print("🔍 Current permission status: \(currentStatus.rawValue)")
+        
+        if currentStatus == .authorized || currentStatus == .limited {
+            print("🔍 Already authorized, loading photos directly")
+            loadPhotos()
+            return
+        }
+        
         PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+            print("🔍 Permission request result: \(status.rawValue)")
             DispatchQueue.main.async {
                 switch status {
                 case .authorized, .limited:
-                    loadPhotos()
+                    print("🔍 Permission granted, loading photos")
+                    self.loadPhotos()
                 case .denied, .restricted:
-                    alertTitle = "Photo Access Denied"
-                    alertMessage = "Please grant photo library access in Settings to select photos."
-                    showingAlert = true
+                    print("🔍 Permission denied")
+                    break
                 case .notDetermined:
+                    print("🔍 Permission still not determined")
                     break
                 @unknown default:
                     break
@@ -176,205 +399,180 @@ struct PhotoSelectorView: View {
         self.allPhotos = photos
     }
     
-    private func processSelectedPhotos() {
-        isProcessing = true
-        
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "MM-dd-yyyy"
-        let dateFolder = dateFormatter.string(from: Date())
-        
-        let destinationPath = "\(appSettings.expandedInventoryPath)/\(dateFolder)/\(scannedSKU)"
-        let destinationURL = URL(fileURLWithPath: destinationPath)
-        
-        // Check if folder exists and has content
-        if FileManager.default.fileExists(atPath: destinationPath) {
-            do {
-                let contents = try FileManager.default.contentsOfDirectory(atPath: destinationPath)
-                if !contents.isEmpty {
-                    isProcessing = false
-                    showingExistingPhotosAlert = true
-                    return
-                }
-            } catch {
-                // If we can't read the directory, proceed anyway
-            }
-        }
-        
-        copyPhotosToDestination()
-    }
-    
     private func copyPhotosToDestination() {
         guard !selectedImages.isEmpty else { return }
         
         isProcessing = true
         
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "MM-dd-yyyy"
-        let dateFolder = dateFormatter.string(from: Date())
-        
-        let destinationPath = "\(appSettings.expandedInventoryPath)/\(dateFolder)/\(scannedSKU)"
-        let destinationURL = URL(fileURLWithPath: destinationPath)
-        
-        // Create destination directory
-        do {
-            try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true, attributes: nil)
-        } catch {
-            DispatchQueue.main.async {
-                self.isProcessing = false
-                self.alertTitle = "Error"
-                self.alertMessage = "Failed to create destination folder: \(error.localizedDescription)"
-                self.showingAlert = true
-            }
+        // Restore access to security-scoped resource before creating folders
+        let hasAccess = restoreSecurityScopedAccess()
+        if !hasAccess {
+            showAlert(title: "Permission Error", message: "Cannot access the selected folder. Please reselect the folder in Settings.")
+            isProcessing = false
             return
         }
         
-        let group = DispatchGroup()
-        var errors: [Error] = []
-        var processedCount = 0
+        // Create folder structure: InventoryFolder/MM-DD-YYYY/SKU
+        let inventoryFolderURL = URL(fileURLWithPath: appSettings.expandedInventoryPath)
+        print("📁 Inventory folder path: \(inventoryFolderURL.path)")
         
-        for (index, asset) in selectedImages.enumerated() {
-            group.enter()
+        // Create date folder in MM-DD-YYYY format
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MM-dd-yyyy"
+        let dateString = dateFormatter.string(from: Date())
+        let dateFolderURL = inventoryFolderURL.appendingPathComponent(dateString)
+        
+        // Create SKU folder inside date folder
+        let skuFolderURL = dateFolderURL.appendingPathComponent(scannedSKU)
+        print("📁 Creating folder: \(skuFolderURL.path)")
+        
+        do {
+            try FileManager.default.createDirectory(at: skuFolderURL, withIntermediateDirectories: true, attributes: nil)
+            print("✅ Successfully created folder: \(skuFolderURL.path)")
+        } catch {
+            print("❌ Failed to create folder: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            print("❌ Attempted path: \(skuFolderURL.path)")
             
-            // Get original filename from PHAsset, with fallback to generic name
-            let originalFileName = PHAssetResource.assetResources(for: asset).first?.originalFilename ?? "photo_\(index + 1).jpg"
+            showAlert(title: "Error", message: "Failed to create folder: \(error.localizedDescription)")
+            isProcessing = false
+            return
+        }
+        
+        let dispatchGroup = DispatchGroup()
+        var successCount = 0
+        var errors: [String] = []
+        
+        for asset in selectedImages {
+            dispatchGroup.enter()
             
-            // Ensure the file has a .jpg extension for consistency
-            let fileName: String
-            if originalFileName.lowercased().hasSuffix(".jpg") || originalFileName.lowercased().hasSuffix(".jpeg") {
-                fileName = originalFileName
-            } else {
-                // Replace extension with .jpg
-                let nameWithoutExtension = URL(fileURLWithPath: originalFileName).deletingPathExtension().lastPathComponent
-                fileName = "\(nameWithoutExtension).jpg"
-            }
+            let resources = PHAssetResource.assetResources(for: asset)
+            let fileName = resources.first?.originalFilename ?? "IMG_\(asset.localIdentifier).jpg"
+            let destinationURL = skuFolderURL.appendingPathComponent(fileName)
             
-            let fileURL = destinationURL.appendingPathComponent(fileName)
-            
-            imageManager.requestImageDataAndOrientation(for: asset, options: imageRequestOptions) { data, dataUTI, orientation, info in
-                defer { group.leave() }
+            imageManager.requestImageDataAndOrientation(for: asset, options: imageRequestOptions) { data, _, _, _ in
+                defer { dispatchGroup.leave() }
                 
-                guard let data = data else {
-                    errors.append(NSError(domain: "PhotoError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to get image data"]))
+                guard let imageData = data else {
+                    errors.append("Failed to get data for \(fileName)")
                     return
                 }
                 
                 do {
-                    // Convert to JPEG if needed
-                    let imageData: Data
-                    if dataUTI == "public.jpeg" {
-                        imageData = data
-                    } else {
-                        guard let image = UIImage(data: data),
-                              let jpegData = image.jpegData(compressionQuality: 0.8) else {
-                            errors.append(NSError(domain: "PhotoError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to convert image to JPEG"]))
-                            return
-                        }
-                        imageData = jpegData
-                    }
-                    
-                    try imageData.write(to: fileURL)
-                    processedCount += 1
-                    
-                    // Delete original photo if setting is enabled
-                    if self.appSettings.deletePhotosAfterScan {
-                        PHPhotoLibrary.shared().performChanges {
-                            PHAssetChangeRequest.deleteAssets([asset] as NSArray)
-                        }
-                    }
+                    try imageData.write(to: destinationURL)
+                    successCount += 1
                 } catch {
-                    errors.append(error)
+                    errors.append("Failed to save \(fileName): \(error.localizedDescription)")
                 }
             }
         }
         
-        group.notify(queue: .main) {
+        dispatchGroup.notify(queue: .main) {
             self.isProcessing = false
             
-            if errors.isEmpty {
-                self.alertTitle = "Success"
-                self.alertMessage = "\(processedCount) photo\(processedCount == 1 ? "" : "s") copied successfully to \(destinationPath)"
-                self.showingAlert = true
+            if successCount == self.selectedImages.count {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "MM-dd-yyyy"
+                let dateString = dateFormatter.string(from: Date())
+                self.showToast("Copied \(successCount) photos to \(dateString)/\(self.scannedSKU)")
                 
+                // Delay before proceeding to allow toast to be seen
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    if self.appSettings.deletePhotosAfterScan {
+                        self.deleteSelectedPhotos()
+                    } else {
+                        self.onComplete()
+                    }
+                }
+            } else {
+                let errorMessage = "Copied \(successCount) of \(self.selectedImages.count) photos.\n\nErrors:\n" + errors.joined(separator: "\n")
+                self.showAlert(title: "Partial Success", message: errorMessage) {
                     self.onComplete()
                 }
-            } else {
-                self.alertTitle = "Partial Success"
-                self.alertMessage = "\(processedCount) of \(self.selectedImages.count) photos copied. \(errors.count) error\(errors.count == 1 ? "" : "s") occurred."
-                self.showingAlert = true
             }
         }
     }
-}
-
-struct PhotoThumbnailView: View {
-    let asset: PHAsset
-    let isSelected: Bool
-    let imageManager: PHImageManager
-    let imageRequestOptions: PHImageRequestOptions
-    let onTap: () -> Void
     
-    @State private var thumbnail: UIImage?
-    
-    var body: some View {
-        ZStack {
-            if let thumbnail = thumbnail {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 120, height: 120)
-                    .clipped()
-            } else {
-                Rectangle()
-                    .fill(Color(.systemGray5))
-                    .frame(width: 120, height: 120)
-                    .overlay(
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    )
-            }
-            
-            // Selection overlay
-            if isSelected {
-                Rectangle()
-                    .fill(Color.blue.opacity(0.3))
-                    .frame(width: 120, height: 120)
-                
-                VStack {
-                    HStack {
-                        Spacer()
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.blue)
-                            .background(Color.white)
-                            .clipShape(Circle())
-                            .font(.title2)
-                            .padding(8)
+    private func deleteSelectedPhotos() {
+        PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest.deleteAssets(self.selectedImages as NSArray)
+        } completionHandler: { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    let dateFormatter = DateFormatter()
+                    dateFormatter.dateFormat = "MM-dd-yyyy"
+                    let dateString = dateFormatter.string(from: Date())
+                    self.showToast("Copied \(self.selectedImages.count) photos to \(dateString)/\(self.scannedSKU)")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        self.onComplete()
                     }
-                    Spacer()
+                } else {
+                    self.showAlert(title: "Warning", message: "Photos copied but could not be deleted: \(error?.localizedDescription ?? "Unknown error")") {
+                        self.onComplete()
+                    }
                 }
             }
         }
-        .onTapGesture {
-            onTap()
+    }
+    
+    private func restoreSecurityScopedAccess() -> Bool {
+        guard let bookmarkData = UserDefaults.standard.data(forKey: "folderBookmark") else {
+            print("📁 No folder bookmark found - using default path")
+            return true // Assume it's the default path which should work
         }
-        .onAppear {
-            loadThumbnail()
+        
+        do {
+            var isStale = false
+            let url = try URL(resolvingBookmarkData: bookmarkData, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &isStale)
+            
+            if isStale {
+                print("⚠️ Bookmark is stale, user needs to reselect folder")
+                return false
+            }
+            
+            guard url.startAccessingSecurityScopedResource() else {
+                print("❌ Failed to restore access to security-scoped resource")
+                return false
+            }
+            
+            print("✅ Restored access to folder: \(url.path)")
+            return true
+            
+        } catch {
+            print("❌ Failed to resolve bookmark: \(error)")
+            return false
         }
     }
     
-    private func loadThumbnail() {
-        let targetSize = CGSize(width: 120, height: 120)
+    private func showToast(_ message: String) {
+        toastMessage = message
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showingToast = true
+        }
         
-        imageManager.requestImage(
-            for: asset,
-            targetSize: targetSize,
-            contentMode: .aspectRatio,
-            options: imageRequestOptions
-        ) { image, _ in
-            DispatchQueue.main.async {
-                self.thumbnail = image
+        // Auto-hide after 1.5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                self.showingToast = false
             }
         }
+    }
+    
+    private func showAlert(title: String, message: String, action: (() -> Void)? = nil) {
+        alertTitle = title
+        alertMessage = message
+        alertAction = action
+        showingAlert = true
+    }
+    
+    private func showExistingPhotosAlert(count: Int, date: String) {
+        showAlert(
+            title: "Photos Already Exist",
+            message: "Found \(count) photos for \(scannedSKU) from \(date), delete them manually first",
+            action: {
+                self.onComplete() // Go back to main screen
+            }
+        )
     }
 }
 

@@ -5,6 +5,7 @@ struct BarcodeScannerView: View {
     let onScanComplete: (String) -> Void
     @State private var showingAlert = false
     @State private var alertMessage = ""
+    @State private var showingTestOptions = false
     @Environment(\.presentationMode) var presentationMode
     
     var body: some View {
@@ -48,6 +49,16 @@ struct BarcodeScannerView: View {
                     }
                     .foregroundColor(.white)
                 }
+                
+                // Debug button for simulator testing
+                #if targetEnvironment(simulator)
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Test") {
+                        showingTestOptions = true
+                    }
+                    .foregroundColor(.yellow)
+                }
+                #endif
             }
         }
         .alert("Scanner Error", isPresented: $showingAlert) {
@@ -55,6 +66,25 @@ struct BarcodeScannerView: View {
         } message: {
             Text(alertMessage)
         }
+        #if targetEnvironment(simulator)
+        .alert("Test Barcode Scan", isPresented: $showingTestOptions) {
+            Button("Sneaker SKU") {
+                onScanComplete("SNK123456789")
+            }
+            Button("Electronics") {
+                onScanComplete("ELC987654321")
+            }
+            Button("Clothing") {
+                onScanComplete("CLT555666777")
+            }
+            Button("Test SKU") {
+                onScanComplete("TEST123456789")
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose a test SKU to simulate scanning:")
+        }
+        #endif
     }
 }
 
@@ -128,18 +158,42 @@ struct CameraView: UIViewRepresentable {
     
     class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         let parent: CameraView
+        private var hasScanned = false
+        private var lastScannedValue: String?
+        private var lastScanTime: Date?
         
         init(_ parent: CameraView) {
             self.parent = parent
         }
         
         func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+            // Prevent multiple scans
+            guard !hasScanned else { return }
+            
             if let metadataObject = metadataObjects.first {
                 guard let readableObject = metadataObject as? AVMetadataMachineReadableCodeObject else { return }
                 guard let stringValue = readableObject.stringValue else { return }
                 
+                // Additional protection: check if we just scanned the same value recently
+                let now = Date()
+                if let lastValue = lastScannedValue, 
+                   let lastTime = lastScanTime,
+                   lastValue == stringValue,
+                   now.timeIntervalSince(lastTime) < 2.0 {
+                    return
+                }
+                
+                // Mark as scanned to prevent duplicates
+                hasScanned = true
+                lastScannedValue = stringValue
+                lastScanTime = now
+                
                 AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
-                parent.onScanComplete(stringValue)
+                
+                // Dispatch to main queue and add slight delay to ensure UI state is consistent
+                DispatchQueue.main.async {
+                    self.parent.onScanComplete(stringValue)
+                }
             }
         }
     }

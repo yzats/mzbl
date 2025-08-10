@@ -1,11 +1,15 @@
 import SwiftUI
 
+struct ScannedItem: Identifiable {
+    let id = UUID()
+    let sku: String
+}
+
 struct ContentView: View {
     @EnvironmentObject var appSettings: AppSettings
     @State private var showingBarcodeScanner = false
     @State private var showingSettings = false
-    @State private var scannedSKU: String? = nil
-    @State private var showingPhotoSelector = false
+    @State private var currentItem: ScannedItem? = nil
     
     var body: some View {
         NavigationView {
@@ -53,7 +57,7 @@ struct ContentView: View {
                 Spacer()
             }
             .navigationTitle("")
-            .navigationBarHidden(true)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
@@ -69,20 +73,23 @@ struct ContentView: View {
         .navigationViewStyle(StackNavigationViewStyle())
         .fullScreenCover(isPresented: $showingBarcodeScanner) {
             BarcodeScannerView { sku in
-                scannedSKU = sku
+                print("🔍 SCAN COMPLETE: SKU = \(sku)")
                 showingBarcodeScanner = false
-                showingPhotoSelector = true
+                DispatchQueue.main.async {
+                    currentItem = ScannedItem(sku: sku)
+                }
             }
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
-        .sheet(isPresented: $showingPhotoSelector) {
-            if let sku = scannedSKU {
-                PhotoSelectorView(scannedSKU: sku) {
-                    scannedSKU = nil
-                    showingPhotoSelector = false
-                }
+        .fullScreenCover(item: $currentItem) { item in
+            PhotoSelectorView(scannedSKU: item.sku) {
+                print("🔍 PhotoSelector onComplete called")
+                currentItem = nil
+            }
+            .onAppear {
+                print("🔍 PRESENTING PhotoSelectorView with SKU: \(item.sku)")
             }
         }
     }
