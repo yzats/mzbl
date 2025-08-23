@@ -288,9 +288,9 @@ struct PhotoSelectorView: View {
             let inventoryContents = try FileManager.default.contentsOfDirectory(at: inventoryFolderURL, includingPropertiesForKeys: [.isDirectoryKey])
             print("📁 Checking \(inventoryContents.count) items in inventory folder")
             
-            // Filter for directories that match date format (MM-DD-YYYY)
+            // Filter for directories that match date format (YYYY-MM-DD)
             let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "MM-dd-yyyy"
+            dateFormatter.dateFormat = "yyyy-MM-dd"
             
             for dateFolder in inventoryContents {
                 do {
@@ -313,6 +313,7 @@ struct PhotoSelectorView: View {
                     let skuContents = try FileManager.default.contentsOfDirectory(at: skuFolderURL, includingPropertiesForKeys: nil)
                     
                     // Filter for image files (common extensions)
+                    // Note: We now convert all images to JPEG, but check for all formats for backward compatibility
                     let imageExtensions = ["jpg", "jpeg", "png", "heic", "heif"]
                     let imageFiles = skuContents.filter { url in
                         imageExtensions.contains(url.pathExtension.lowercased())
@@ -416,9 +417,9 @@ struct PhotoSelectorView: View {
         let inventoryFolderURL = URL(fileURLWithPath: appSettings.expandedInventoryPath)
         print("📁 Inventory folder path: \(inventoryFolderURL.path)")
         
-        // Create date folder in MM-DD-YYYY format
+        // Create date folder in YYYY-MM-DD format
         let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "MM-dd-yyyy"
+        dateFormatter.dateFormat = "yyyy-MM-dd"
         let dateString = dateFormatter.string(from: Date())
         let dateFolderURL = inventoryFolderURL.appendingPathComponent(dateString)
         
@@ -447,20 +448,38 @@ struct PhotoSelectorView: View {
             dispatchGroup.enter()
             
             let resources = PHAssetResource.assetResources(for: asset)
-            let fileName = resources.first?.originalFilename ?? "IMG_\(asset.localIdentifier).jpg"
+            let originalFileName = resources.first?.originalFilename ?? "IMG_\(asset.localIdentifier)"
+            
+            // Always use .jpg extension for JPEG conversion
+            let baseFileName = (originalFileName as NSString).deletingPathExtension
+            let fileName = "\(baseFileName).jpg"
             let destinationURL = skuFolderURL.appendingPathComponent(fileName)
             
-            imageManager.requestImageDataAndOrientation(for: asset, options: imageRequestOptions) { data, _, _, _ in
+            // Request full-size image for conversion to JPEG
+            let fullSizeOptions = PHImageRequestOptions()
+            fullSizeOptions.deliveryMode = .highQualityFormat
+            fullSizeOptions.resizeMode = .none
+            fullSizeOptions.isSynchronous = false
+            fullSizeOptions.isNetworkAccessAllowed = true
+            
+            imageManager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .default, options: fullSizeOptions) { image, _ in
                 defer { dispatchGroup.leave() }
                 
-                guard let imageData = data else {
-                    errors.append("Failed to get data for \(fileName)")
+                guard let image = image else {
+                    errors.append("Failed to get image for \(fileName)")
+                    return
+                }
+                
+                // Convert to JPEG with high quality (0.9 compression)
+                guard let jpegData = image.jpegData(compressionQuality: 0.9) else {
+                    errors.append("Failed to convert \(fileName) to JPEG")
                     return
                 }
                 
                 do {
-                    try imageData.write(to: destinationURL)
+                    try jpegData.write(to: destinationURL)
                     successCount += 1
+                    print("✅ Converted and saved \(fileName) as JPEG")
                 } catch {
                     errors.append("Failed to save \(fileName): \(error.localizedDescription)")
                 }
@@ -472,7 +491,7 @@ struct PhotoSelectorView: View {
             
             if successCount == self.selectedImages.count {
                 let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "MM-dd-yyyy"
+                dateFormatter.dateFormat = "yyyy-MM-dd"
                 let dateString = dateFormatter.string(from: Date())
                 self.showToast("Copied \(successCount) photos to \(dateString)/\(self.scannedSKU)")
                 
@@ -500,7 +519,7 @@ struct PhotoSelectorView: View {
             DispatchQueue.main.async {
                 if success {
                     let dateFormatter = DateFormatter()
-                    dateFormatter.dateFormat = "MM-dd-yyyy"
+                    dateFormatter.dateFormat = "yyyy-MM-dd"
                     let dateString = dateFormatter.string(from: Date())
                     self.showToast("Copied \(self.selectedImages.count) photos to \(dateString)/\(self.scannedSKU)")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
