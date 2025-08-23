@@ -10,6 +10,17 @@ struct ContentView: View {
     @State private var showingBarcodeScanner = false
     @State private var showingSettings = false
     @State private var currentItem: ScannedItem? = nil
+    @State private var showingInvalidSKUAlert = false
+    @State private var invalidSKU = ""
+    
+    // SKU validation function
+    private func isValidSKU(_ sku: String) -> Bool {
+        // Expected format: {Letter}{Numbers} - exactly one letter followed by numbers
+        let pattern = "^[A-Za-z][0-9]+$"
+        let regex = try? NSRegularExpression(pattern: pattern)
+        let range = NSRange(location: 0, length: sku.utf16.count)
+        return regex?.firstMatch(in: sku, options: [], range: range) != nil
+    }
     
     var body: some View {
         NavigationView {
@@ -18,7 +29,7 @@ struct ContentView: View {
                 
                 // App Logo/Title
                 VStack(spacing: 20) {
-                    Image(systemName: "qrcode.viewfinder")
+                    Image(systemName: "barcode.viewfinder")
                         .font(.system(size: 80))
                         .foregroundColor(.blue)
                     
@@ -75,8 +86,18 @@ struct ContentView: View {
             BarcodeScannerView { sku in
                 print("🔍 SCAN COMPLETE: SKU = \(sku)")
                 showingBarcodeScanner = false
-                DispatchQueue.main.async {
-                    currentItem = ScannedItem(sku: sku)
+                
+                // Validate SKU format
+                if isValidSKU(sku) {
+                    DispatchQueue.main.async {
+                        currentItem = ScannedItem(sku: sku)
+                    }
+                } else {
+                    // Show error for invalid SKU
+                    DispatchQueue.main.async {
+                        invalidSKU = sku
+                        showingInvalidSKUAlert = true
+                    }
                 }
             }
         }
@@ -91,6 +112,13 @@ struct ContentView: View {
             .onAppear {
                 print("🔍 PRESENTING PhotoSelectorView with SKU: \(item.sku)")
             }
+        }
+        .alert("Invalid SKU Format", isPresented: $showingInvalidSKUAlert) {
+            Button("OK") {
+                // Alert will automatically dismiss and return to main screen
+            }
+        } message: {
+            Text("Scanned SKU: \"\(invalidSKU)\"\n\nExpected format: {Letter}{Numbers}\nExample: A12345, Z123")
         }
     }
 }

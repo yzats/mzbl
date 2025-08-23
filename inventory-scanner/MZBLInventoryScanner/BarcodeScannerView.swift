@@ -68,17 +68,29 @@ struct BarcodeScannerView: View {
         }
         #if targetEnvironment(simulator)
         .alert("Test Barcode Scan", isPresented: $showingTestOptions) {
-            Button("Sneaker SKU") {
-                onScanComplete("SNK123456789")
+            Button("✅ Valid: A12345") {
+                onScanComplete("A12345")
             }
-            Button("Electronics") {
-                onScanComplete("ELC987654321")
+            Button("✅ Valid: Z999") {
+                onScanComplete("Z999")
             }
-            Button("Clothing") {
-                onScanComplete("CLT555666777")
+            Button("✅ Valid: B1") {
+                onScanComplete("B1")
             }
-            Button("Test SKU") {
-                onScanComplete("TEST123456789")
+            Button("❌ Invalid: AB123 (2 letters)") {
+                onScanComplete("AB123")
+            }
+            Button("❌ Invalid: 123A (numbers first)") {
+                onScanComplete("123A")
+            }
+            Button("❌ Invalid: ABC (no numbers)") {
+                onScanComplete("ABC")
+            }
+            Button("❌ Invalid: 123 (no letters)") {
+                onScanComplete("123")
+            }
+            Button("❌ Invalid: SNK123 (3 letters)") {
+                onScanComplete("SNK123")
             }
             Button("Cancel", role: .cancel) { }
         } message: {
