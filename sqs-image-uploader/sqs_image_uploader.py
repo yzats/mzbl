@@ -540,14 +540,10 @@ def main():
         epilog="""
 Examples:
   %(prog)s                                    # Normal upload mode (prompts for cache refresh)
-  %(prog)s --dry-run                          # Show what would be uploaded without making changes
-  %(prog)s -d                                 # Short form for dry run
-  %(prog)s --force-refresh                    # Force download fresh inventory without prompting
-  %(prog)s -f                                 # Short form for force refresh
-  %(prog)s --path /path/to/folder             # Specify custom folder path
-  %(prog)s --log mylog.log                    # Log output to custom file
-  %(prog)s -l mylog.log                       # Short form for custom log file
-  %(prog)s --dry-run --force-refresh          # Combine dry run with forced refresh
+  %(prog)s --dry-run -d                       # Show what would be uploaded without making changes
+  %(prog)s --force-refresh  -f                # Force download fresh inventory without prompting
+  %(prog)s --path -p /path/to/folder          # Specify custom folder path
+  %(prog)s --log -l mylog.log                 # Log output to custom file
         """
     )
     parser.add_argument(
