@@ -14,15 +14,25 @@ class AppSettings: ObservableObject {
     }
     
     init() {
-        // Default path: iCloud Drive MZBL/SQS Upload folder
+        // Default path: iCloud Drive/MZBL/SQS Upload
         let defaultPath: String
-        if let iCloudURL = FileManager.default.url(forUbiquityContainerIdentifier: nil)?.appendingPathComponent("MZBL/SQS Upload") {
-            defaultPath = iCloudURL.path
+        if let iCloudURL = FileManager.default.url(forUbiquityContainerIdentifier: nil) {
+            // Create MZBL/SQS Upload folder structure in iCloud Drive
+            let inventoryURL = iCloudURL.appendingPathComponent("MZBL/SQS Upload")
+            defaultPath = inventoryURL.path
+            
+            // Try to create the folder structure if it doesn't exist
+            try? FileManager.default.createDirectory(at: inventoryURL, withIntermediateDirectories: true, attributes: nil)
         } else {
             // Fallback to local Documents if iCloud is not available
-            defaultPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
                 .appendingPathComponent("MZBL/SQS Upload")
-                .path ?? NSHomeDirectory() + "/Documents/MZBL/SQS Upload"
+            defaultPath = documentsURL?.path ?? NSHomeDirectory() + "/Documents/MZBL/SQS Upload"
+            
+            // Try to create the local folder structure if it doesn't exist
+            if let documentsURL = documentsURL {
+                try? FileManager.default.createDirectory(at: documentsURL, withIntermediateDirectories: true, attributes: nil)
+            }
         }
         
         self.inventoryFolderPath = UserDefaults.standard.string(forKey: "inventoryFolderPath") ?? defaultPath

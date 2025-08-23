@@ -30,6 +30,7 @@
 		A12345678901234567890012 /* FileManager+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileManager+Extensions.swift"; sourceTree = "<group>"; };
 		A12345678901234567890013 /* MZBLInventoryScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MZBLInventoryScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12345678901234567890014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A12345678901234567890025 /* MZBLInventoryScanner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MZBLInventoryScanner.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -63,6 +64,7 @@
 				A12345678901234567890012 /* FileManager+Extensions.swift */,
 				A12345678901234567890006 /* Assets.xcassets */,
 				A12345678901234567890014 /* Info.plist */,
+				A12345678901234567890025 /* MZBLInventoryScanner.entitlements */,
 				A12345678901234567890019 /* Preview Content */,
 			);
 			path = MZBLInventoryScanner;
@@ -291,6 +293,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MZBLInventoryScanner/MZBLInventoryScanner.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 202508231453;
 				DEVELOPMENT_ASSET_PATHS = "\"MZBLInventoryScanner/Preview Content\"";
@@ -323,6 +326,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MZBLInventoryScanner/MZBLInventoryScanner.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 202508231453;
 				DEVELOPMENT_ASSET_PATHS = "\"MZBLInventoryScanner/Preview Content\"";
