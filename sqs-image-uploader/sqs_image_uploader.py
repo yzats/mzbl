@@ -241,27 +241,50 @@ class SquarespaceImageUploader:
             return self.get_products()
 
     def _build_sku_lookup(self) -> Dict[str, List[Dict]]:
-        """Build a fast lookup dictionary for SKU searches"""
+        """Build a fast lookup dictionary for SKU searches (case-insensitive using uppercase keys)"""
         if self._sku_lookup is None:
             products = self._get_cached_products()
             self._sku_lookup = {}
+            case_conflicts = {}  # Track different case variants of same SKU
             
             for product in products:
                 # Add product-level SKU
                 product_sku = product.get('sku', '')
                 if product_sku:
-                    if product_sku not in self._sku_lookup:
-                        self._sku_lookup[product_sku] = []
-                    self._sku_lookup[product_sku].append(product)
+                    # Use uppercase for case-insensitive matching
+                    sku_key = product_sku.upper()
+                    
+                    # Track case variants for conflict detection
+                    if sku_key not in case_conflicts:
+                        case_conflicts[sku_key] = set()
+                    case_conflicts[sku_key].add(product_sku)
+                    
+                    if sku_key not in self._sku_lookup:
+                        self._sku_lookup[sku_key] = []
+                    self._sku_lookup[sku_key].append(product)
                 
                 # Add variant-level SKUs
                 variants = product.get('variants', [])
                 for variant in variants:
                     variant_sku = variant.get('sku', '')
                     if variant_sku and variant_sku != product_sku:
-                        if variant_sku not in self._sku_lookup:
-                            self._sku_lookup[variant_sku] = []
-                        self._sku_lookup[variant_sku].append(product)
+                        # Use uppercase for case-insensitive matching
+                        sku_key = variant_sku.upper()
+                        
+                        # Track case variants for conflict detection
+                        if sku_key not in case_conflicts:
+                            case_conflicts[sku_key] = set()
+                        case_conflicts[sku_key].add(variant_sku)
+                        
+                        if sku_key not in self._sku_lookup:
+                            self._sku_lookup[sku_key] = []
+                        self._sku_lookup[sku_key].append(product)
+            
+            # Log any case conflicts found
+            for sku_key, variants in case_conflicts.items():
+                if len(variants) > 1:
+                    logger.warning(f"⚠️ Multiple case variants found for SKU '{sku_key}': {sorted(variants)}")
+                    logger.warning(f"   Will use first match found during lookup")
             
         
         return self._sku_lookup
@@ -295,15 +318,21 @@ class SquarespaceImageUploader:
                 logger.info(f"   Product Image {j+1}: ID={image_id}, Filename={filename}")
 
     def get_product_by_sku(self, sku: str) -> Optional[Dict]:
-        """Get a specific product by SKU"""
+        """Get a specific product by SKU (case-insensitive)"""
         try:
             # Get fast SKU lookup
             sku_lookup = self._build_sku_lookup()
             
+            # Convert to uppercase for case-insensitive matching
+            sku_key = sku.upper()
             
-            # Fast lookup
-            matching_products = sku_lookup.get(sku, [])
-            logger.info(f"📊 Found {len(matching_products)} products with this SKU")
+            # Log case normalization if it occurred
+            if sku != sku_key:
+                logger.info(f"🔤 Normalizing SKU case: '{sku}' → '{sku_key}'")
+            
+            # Fast lookup using uppercase key
+            matching_products = sku_lookup.get(sku_key, [])
+            logger.info(f"📊 Found {len(matching_products)} products with SKU '{sku}'")
             
             if len(matching_products) > 1:
                 logger.warning(f"⚠️ Multiple products found with SKU {sku}:")
@@ -315,7 +344,7 @@ class SquarespaceImageUploader:
                 product_name = product.get('name', product.get('title', 'Unknown'))
                 return product
             else:
-                logger.warning(f"❌ No products found with SKU: {sku}")
+                logger.warning(f"❌ No products found with SKU: {sku} (searched as: {sku_key})")
                 return None
                 
         except Exception as e:
