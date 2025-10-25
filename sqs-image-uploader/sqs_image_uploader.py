@@ -21,6 +21,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import logging
+
+# Add parent directory to path for shared library
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from sqs_shared import SquarespaceInventoryManager, rate_limited
+
 from config import SQUARESPACE_API_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES, RETRY_DELAY
 
 # Note: Logging will be configured in main() after parsing command line args
@@ -38,17 +43,15 @@ class SquarespaceImageUploader:
         }
         self.dry_run = dry_run
         self.icloud_path = icloud_path or ICLOUD_FOLDER_PATH
-        self.cache_filename = cache_filename
         self.force_refresh = force_refresh
         
-        # Rate limiting setup
-        self.requests_per_minute = REQUESTS_PER_MINUTE
-        self.request_times = []
-        self.min_interval = 60.0 / self.requests_per_minute if self.requests_per_minute > 0 else 0
-        
-        # Cache for products
-        self._products_cache = None
-        self._sku_lookup = None
+        # Initialize inventory manager from shared library
+        self.inventory_manager = SquarespaceInventoryManager(
+            api_key=SQUARESPACE_API_KEY,
+            site_id=SQUARESPACE_SITE_ID,
+            cache_filename=cache_filename,
+            requests_per_minute=REQUESTS_PER_MINUTE
+        )
         
         # Statistics tracking
         self.stats = {
@@ -65,230 +68,6 @@ class SquarespaceImageUploader:
         
         logger.info(f"📁 Using iCloud folder: {self.icloud_path}")
     
-    def _rate_limit(self):
-        """Implement rate limiting for API requests"""
-        if self.requests_per_minute <= 0:
-            return  # No rate limiting
-        
-        current_time = time.time()
-        
-        # Remove requests older than 1 minute
-        self.request_times = [t for t in self.request_times if current_time - t < 60.0]
-        
-        # If we've made too many requests in the last minute, wait
-        if len(self.request_times) >= self.requests_per_minute:
-            oldest_request = min(self.request_times)
-            wait_time = 60.0 - (current_time - oldest_request) + 0.1  # Add small buffer
-            if wait_time > 0:
-                logger.debug(f"Rate limit reached, waiting {wait_time:.1f} seconds")
-                time.sleep(wait_time)
-                current_time = time.time()
-        
-        # Record this request
-        self.request_times.append(current_time)
-        
-    def get_products(self) -> List[Dict]:
-        """Fetch all products from Squarespace with pagination"""
-        all_products = []
-        cursor = None
-        page = 1
-        
-        logger.info("📥 Retrieving all products from Squarespace...")
-        
-        while True:
-            self._rate_limit()
-            try:
-                params = {'limit': 50}  # Maximum page size
-                if cursor:
-                    params['cursor'] = cursor
-                
-                response = requests.get(
-                    f"{self.base_url}",
-                    headers=self.headers,
-                    params=params
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                products = data.get('products', [])
-                all_products.extend(products)
-                
-                # Show progress every 1000 products
-                if len(all_products) % 1000 == 0:
-                    logger.info(f"📥 Retrieved {len(all_products)} products so far...")
-                
-                # Check if there are more pages
-                pagination = data.get('pagination', {})
-                cursor = pagination.get('nextPageCursor')
-                
-                if not cursor:
-                    break
-                    
-                page += 1
-                
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to fetch products on page {page}: {e}")
-                break
-        
-        logger.info(f"✅ Retrieved {len(all_products)} total products from Squarespace")
-        return all_products
-
-    def _get_cached_products(self) -> List[Dict]:
-        """Get products from cache (file or memory), fetching if not cached"""
-        if self._products_cache is None:
-            # Check if we should use file cache or download fresh
-            self._products_cache = self._get_products_with_file_cache()
-        return self._products_cache
-
-    def _get_products_with_file_cache(self) -> List[Dict]:
-        """Get products using file cache with user prompting for refresh"""
-        cache_age = self._get_cache_file_age()
-        
-        if self.force_refresh:
-            # Force refresh was requested, download unconditionally
-            logger.info("🔄 Force refresh requested, downloading fresh inventory from Squarespace...")
-            products = self.get_products()
-            self._save_products_to_cache(products)
-            return products
-        elif cache_age is None:
-            # No cache file exists, download unconditionally
-            logger.info("📥 No cached inventory found, downloading from Squarespace...")
-            products = self.get_products()
-            self._save_products_to_cache(products)
-            return products
-        else:
-            # Cache file exists, prompt user
-            age_str = self._format_age(cache_age)
-            print(f"\n📁 Found cached inventory file: {self.cache_filename}")
-            print(f"🕐 Cache age: {age_str} old")
-            
-            while True:
-                response = input("\n🔄 Download fresh inventory from Squarespace? (y/n): ").strip().lower()
-                if response in ['y', 'yes']:
-                    logger.info("📥 Downloading fresh inventory from Squarespace...")
-                    products = self.get_products()
-                    self._save_products_to_cache(products)
-                    return products
-                elif response in ['n', 'no']:
-                    logger.info("📂 Using cached inventory...")
-                    return self._load_products_from_cache()
-                else:
-                    print("Please enter 'y' or 'n'")
-
-    def _get_cache_file_age(self) -> Optional[timedelta]:
-        """Get the age of the cache file"""
-        if not os.path.exists(self.cache_filename):
-            return None
-        
-        file_mtime = os.path.getmtime(self.cache_filename)
-        file_time = datetime.fromtimestamp(file_mtime)
-        return datetime.now() - file_time
-
-    def _format_age(self, age: timedelta) -> str:
-        """Format age in human-readable format"""
-        if age.days > 0:
-            hours = age.seconds // 3600
-            if hours > 0:
-                return f"{age.days} day{'s' if age.days != 1 else ''}, {hours} hour{'s' if hours != 1 else ''}"
-            else:
-                return f"{age.days} day{'s' if age.days != 1 else ''}"
-        elif age.seconds >= 3600:
-            hours = age.seconds // 3600
-            minutes = (age.seconds % 3600) // 60
-            if minutes > 0:
-                return f"{hours} hour{'s' if hours != 1 else ''}, {minutes} minute{'s' if minutes != 1 else ''}"
-            else:
-                return f"{hours} hour{'s' if hours != 1 else ''}"
-        else:
-            minutes = age.seconds // 60
-            return f"{minutes} minute{'s' if minutes != 1 else ''}"
-
-    def _save_products_to_cache(self, products: List[Dict]):
-        """Save products to cache file"""
-        try:
-            cache_data = {
-                'timestamp': datetime.now().isoformat(),
-                'products': products,
-                'count': len(products)
-            }
-            
-            with open(self.cache_filename, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"💾 Saved {len(products)} products to cache file: {self.cache_filename}")
-            
-        except Exception as e:
-            logger.error(f"Failed to save cache file: {e}")
-            # Continue without caching rather than failing completely
-
-    def _load_products_from_cache(self) -> List[Dict]:
-        """Load products from cache file"""
-        try:
-            with open(self.cache_filename, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
-            
-            products = cache_data.get('products', [])
-            count = cache_data.get('count', len(products))
-            timestamp = cache_data.get('timestamp', 'unknown')
-            
-            logger.info(f"📂 Loaded {count} products from cache (saved: {timestamp})")
-            return products
-            
-        except Exception as e:
-            logger.error(f"Failed to load cache file: {e}")
-            # Fall back to downloading fresh
-            logger.info("📥 Falling back to downloading fresh inventory...")
-            return self.get_products()
-
-    def _build_sku_lookup(self) -> Dict[str, List[Dict]]:
-        """Build a fast lookup dictionary for SKU searches (case-insensitive using uppercase keys)"""
-        if self._sku_lookup is None:
-            products = self._get_cached_products()
-            self._sku_lookup = {}
-            case_conflicts = {}  # Track different case variants of same SKU
-            
-            for product in products:
-                # Add product-level SKU
-                product_sku = product.get('sku', '')
-                if product_sku:
-                    # Use uppercase for case-insensitive matching
-                    sku_key = product_sku.upper()
-                    
-                    # Track case variants for conflict detection
-                    if sku_key not in case_conflicts:
-                        case_conflicts[sku_key] = set()
-                    case_conflicts[sku_key].add(product_sku)
-                    
-                    if sku_key not in self._sku_lookup:
-                        self._sku_lookup[sku_key] = []
-                    self._sku_lookup[sku_key].append(product)
-                
-                # Add variant-level SKUs
-                variants = product.get('variants', [])
-                for variant in variants:
-                    variant_sku = variant.get('sku', '')
-                    if variant_sku and variant_sku != product_sku:
-                        # Use uppercase for case-insensitive matching
-                        sku_key = variant_sku.upper()
-                        
-                        # Track case variants for conflict detection
-                        if sku_key not in case_conflicts:
-                            case_conflicts[sku_key] = set()
-                        case_conflicts[sku_key].add(variant_sku)
-                        
-                        if sku_key not in self._sku_lookup:
-                            self._sku_lookup[sku_key] = []
-                        self._sku_lookup[sku_key].append(product)
-            
-            # Log any case conflicts found
-            for sku_key, variants in case_conflicts.items():
-                if len(variants) > 1:
-                    logger.warning(f"⚠️ Multiple case variants found for SKU '{sku_key}': {sorted(variants)}")
-                    logger.warning(f"   Will use first match found during lookup")
-            
-        
-        return self._sku_lookup
-
     def debug_product_images(self, product: Dict) -> None:
         """Debug method to show all image information for a product"""
         sku = product.get('sku', 'Unknown')
@@ -316,40 +95,6 @@ class SquarespaceImageUploader:
                 image_id = image.get('id', 'Unknown')
                 filename = image.get('filename', 'Unknown')
                 logger.info(f"   Product Image {j+1}: ID={image_id}, Filename={filename}")
-
-    def get_product_by_sku(self, sku: str) -> Optional[Dict]:
-        """Get a specific product by SKU (case-insensitive)"""
-        try:
-            # Get fast SKU lookup
-            sku_lookup = self._build_sku_lookup()
-            
-            # Convert to uppercase for case-insensitive matching
-            sku_key = sku.upper()
-            
-            # Log case normalization if it occurred
-            if sku != sku_key:
-                logger.info(f"🔤 Normalizing SKU case: '{sku}' → '{sku_key}'")
-            
-            # Fast lookup using uppercase key
-            matching_products = sku_lookup.get(sku_key, [])
-            logger.info(f"📊 Found {len(matching_products)} products with SKU '{sku}'")
-            
-            if len(matching_products) > 1:
-                logger.warning(f"⚠️ Multiple products found with SKU {sku}:")
-                for i, product in enumerate(matching_products):
-                    logger.warning(f"   {i+1}. Product ID: {product.get('id')}, Title: {product.get('title', 'Unknown')}")
-            
-            if matching_products:
-                product = matching_products[0]
-                product_name = product.get('name', product.get('title', 'Unknown'))
-                return product
-            else:
-                logger.warning(f"❌ No products found with SKU: {sku} (searched as: {sku_key})")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error searching for SKU {sku}: {e}")
-            return None
 
     def should_skip_product(self, product: Dict) -> Tuple[bool, str]:
         """
@@ -386,15 +131,11 @@ class SquarespaceImageUploader:
         
         return False, ""
 
-    def upload_image(self, product_id: str, image_path: Path) -> bool:
-        """Upload a single image to a product"""
-        if self.dry_run:
-            logger.info(f"[DRY RUN] Would upload {image_path.name} to product {product_id}")
-            return True
-            
-        self._rate_limit()
+    @rate_limited(REQUESTS_PER_MINUTE)
+    def _upload_image_impl(self, product_id: str, image_path: Path) -> bool:
+        """Upload implementation with rate limiting"""
         try:
-            # First, upload the image file
+            # Upload the image file
             with open(image_path, 'rb') as f:
                 files = {'file': (image_path.name, f, 'image/jpeg')}
                 upload_response = requests.post(
@@ -403,7 +144,7 @@ class SquarespaceImageUploader:
                     files=files
                 )
                 upload_response.raise_for_status()
-                
+            
             logger.info(f"Successfully uploaded {image_path.name} to product {product_id}")
             return True
             
@@ -413,6 +154,14 @@ class SquarespaceImageUploader:
         except Exception as e:
             logger.error(f"Unexpected error uploading {image_path.name}: {e}")
             return False
+    
+    def upload_image(self, product_id: str, image_path: Path) -> bool:
+        """Upload a single image to a product"""
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would upload {image_path.name} to product {product_id}")
+            return True
+        
+        return self._upload_image_impl(product_id, image_path)
 
     def process_date_folder(self, date_folder: Path) -> None:
         """Process all SKU folders within a date folder"""
@@ -462,7 +211,7 @@ class SquarespaceImageUploader:
             image_files.sort(key=extract_number_from_filename)
             
             # Get product from Squarespace
-            product = self.get_product_by_sku(sku)
+            product = self.inventory_manager.get_product_by_sku(sku)
             if not product:
                 logger.warning(f"Product with SKU {sku} not found on Squarespace")
                 self.stats['skus_not_found'].append(sku)
@@ -500,7 +249,7 @@ class SquarespaceImageUploader:
             return
         
         # Fetch all products upfront
-        self._get_cached_products()
+        self.inventory_manager.get_products_with_cache(force_refresh=self.force_refresh)
         
         # Get all date folders (ISO8601 format: YYYY-MM-DD)
         date_folders = []
@@ -642,7 +391,9 @@ Examples:
     
     # Handle debug options
     if args.debug_sku:
-        product = uploader.get_product_by_sku(args.debug_sku)
+        # Load products first for debug
+        uploader.inventory_manager.get_products_with_cache(force_refresh=args.force_refresh)
+        product = uploader.inventory_manager.get_product_by_sku(args.debug_sku)
         if product:
             uploader.debug_product_images(product)
         else:
