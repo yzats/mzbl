@@ -8,7 +8,6 @@ A reusable Python library for interacting with the Squarespace API, providing in
 - **Inventory Management**: Download and cache Squarespace product inventory
 - **SKU Lookup**: Fast, case-insensitive SKU-based product lookup
 - **Caching**: File-based caching with age tracking and user prompts
-- **Configuration**: Helper functions to load configuration from various sources
 
 ## Installation
 
@@ -55,16 +54,6 @@ def my_api_call():
     pass
 ```
 
-### Loading Configuration
-
-```python
-from sqs_shared import load_config_from_path
-
-# Load from a config.py file
-config = load_config_from_path("/path/to/config.py")
-api_key = config['SQUARESPACE_API_KEY']
-```
-
 ## API Reference
 
 ### SquarespaceInventoryManager
@@ -102,11 +91,6 @@ def your_function():
 ```
 
 Decorator to rate-limit function calls. Set `requests_per_minute` to 0 or negative to disable.
-
-### Configuration Helpers
-
-- `load_config_from_path(config_path: str) -> Dict[str, Any]`: Load configuration from a config.py file
-- `load_config_from_env() -> Dict[str, Any]`: Load configuration from environment variables
 
 ## Case-Insensitive SKU Matching
 

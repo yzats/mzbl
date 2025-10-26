@@ -22,18 +22,17 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import logging
 
-# Add parent directory to path for shared library
+# Add parent directory to path for shared library and config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from sqs_shared import SquarespaceInventoryManager, rate_limited
-
-from config import SQUARESPACE_API_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES, RETRY_DELAY
+from config import SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES, RETRY_DELAY
 
 # Note: Logging will be configured in main() after parsing command line args
 logger = logging.getLogger(__name__)
 
 class SquarespaceImageUploader:
     def __init__(self, dry_run=False, icloud_path=None, cache_filename="squarespace_products_cache.json", force_refresh=False):
-        self.api_key = SQUARESPACE_API_KEY
+        self.api_key = SQUARESPACE_PRODUCTS_RW_KEY
         self.site_id = SQUARESPACE_SITE_ID
         self.base_url = f"https://api.squarespace.com/1.0/commerce/products"
         self.headers = {
@@ -47,7 +46,7 @@ class SquarespaceImageUploader:
         
         # Initialize inventory manager from shared library
         self.inventory_manager = SquarespaceInventoryManager(
-            api_key=SQUARESPACE_API_KEY,
+            api_key=SQUARESPACE_PRODUCTS_RW_KEY,
             site_id=SQUARESPACE_SITE_ID,
             cache_filename=cache_filename,
             requests_per_minute=REQUESTS_PER_MINUTE
@@ -371,8 +370,8 @@ Examples:
         logger.info("🚀 Starting Squarespace Image Upload Process")
     
     # Validate configuration
-    if not SQUARESPACE_API_KEY:
-        logger.error("SQUARESPACE_API_KEY not configured")
+    if not SQUARESPACE_PRODUCTS_RW_KEY:
+        logger.error("SQUARESPACE_PRODUCTS_RW_KEY not configured")
         sys.exit(1)
     
     if not SQUARESPACE_SITE_ID:

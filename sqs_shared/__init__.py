@@ -9,14 +9,11 @@ A shared library for interacting with Squarespace API, providing:
 
 from .inventory_manager import SquarespaceInventoryManager
 from .rate_limiter import rate_limited
-from .config import load_config_from_path, load_config_from_env
 
 __version__ = "1.0.0"
 __all__ = [
     'SquarespaceInventoryManager',
     'rate_limited',
-    'load_config_from_path',
-    'load_config_from_env',
 ]
 
 
