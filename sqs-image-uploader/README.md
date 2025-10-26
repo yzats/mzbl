@@ -56,7 +56,7 @@ pip install -r requirements.txt
 
 ```python
 # Get these from your Squarespace Developer account
-SQUARESPACE_API_KEY = "your_actual_api_key_here"
+SQUARESPACE_PRODUCTS_RW_KEY = "your_actual_api_key_here"
 SQUARESPACE_SITE_ID = "your_actual_site_id_here"
 
 # Update this to your iCloud folder path
@@ -190,8 +190,8 @@ Log levels:
 
 ### Common Issues
 
-1. **"API key not configured"**
-   - Check that `SQUARESPACE_API_KEY` is set in `config.py`
+1. **"SQUARESPACE_PRODUCTS_RW_KEY not configured"**
+   - Check that `SQUARESPACE_PRODUCTS_RW_KEY` is set in `config.py`
 
 2. **"Site ID not configured"**
    - Verify `SQUARESPACE_SITE_ID` in `config.py`
