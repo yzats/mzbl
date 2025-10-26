@@ -7,19 +7,11 @@ set -e
 
 echo "🚀 Starting MZBL Management UI..."
 
-# Check if virtual environment exists
-if [ ! -d "venv" ]; then
-    echo "📦 Creating virtual environment..."
-    python3 -m venv venv
-fi
 
 # Activate virtual environment
 echo "🔧 Activating virtual environment..."
-source venv/bin/activate
+source ~/devl/venv/bin/activate
 
-# Install/upgrade dependencies
-echo "📥 Installing dependencies..."
-pip install -r requirements.txt
 
 # Start the Flask application
 echo "🌐 Starting web server..."
