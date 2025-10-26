@@ -58,3 +58,4 @@ Thumbs.db
 *.tmp
 *.temp 
 *.csv
+mzbl-ui/settings.json
