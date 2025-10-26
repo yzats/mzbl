@@ -178,13 +178,13 @@ def handle_icloud_drive_access(requested_path=None):
         # Use subprocess to list iCloud Drive contents to bypass Python restrictions
         import subprocess
         
-        # Convert symlink path to real path for subprocess
-        if requested_path and '/Users/yzats/iCloudDrive' in requested_path:
-            # Replace symlink path with real path
-            real_path = requested_path.replace('/Users/yzats/iCloudDrive', 
-                                             '/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs')
-        else:
-            real_path = requested_path or "/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs"
+        # Get user's home directory dynamically
+        home_dir = str(Path.home())
+        icloud_real_path = f"{home_dir}/Library/Mobile Documents/com~apple~CloudDocs"
+        
+        # Use the requested path or default to iCloud root
+        # The path should already be the real path at this point
+        real_path = requested_path or icloud_real_path
         
         # Run ls command to get directory contents
         result = subprocess.run(['ls', '-la', real_path], 
@@ -205,10 +205,10 @@ def handle_icloud_drive_access(requested_path=None):
                 logger.warning(f"Both ls and find failed, iCloud Drive access denied")
                 return jsonify({
                     'error': 'iCloud Drive access denied. Please grant Full Disk Access to Terminal in System Preferences → Security & Privacy → Privacy → Full Disk Access',
-                    'current_path': '/Users/yzats/iCloudDrive',
+                    'current_path': icloud_real_path,
                     'items': [{
                         'name': '..',
-                        'path': str(Path.home()),
+                        'path': home_dir,
                         'type': 'directory',
                         'is_parent': True
                     }]
@@ -218,16 +218,13 @@ def handle_icloud_drive_access(requested_path=None):
         
         # Add parent directory
         parent_path = str(Path(real_path).parent)
-        # Convert back to symlink path for display
-        if '/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs' in parent_path:
-            display_parent = parent_path.replace('/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs',
-                                               '/Users/yzats/iCloudDrive')
-        else:
-            display_parent = str(Path.home())
+        # If parent is outside iCloud, go to home directory
+        if not parent_path.startswith(icloud_real_path):
+            parent_path = home_dir
             
         items.append({
             'name': '..',
-            'path': display_parent,
+            'path': parent_path,
             'type': 'directory',
             'is_parent': True
         })
@@ -249,24 +246,18 @@ def handle_icloud_drive_access(requested_path=None):
                 continue  # Skip hidden files
                 
             item_type = 'directory' if permissions.startswith('d') else 'file'
-            # Use real path for actual access but convert to symlink path for display
+            # Use real path directly
             full_real_path = f"{real_path}/{name}"
-            display_path = full_real_path.replace('/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs',
-                                                '/Users/yzats/iCloudDrive')
             
             items.append({
                 'name': name,
-                'path': display_path,
+                'path': full_real_path,
                 'type': item_type,
                 'is_parent': False
             })
         
-        # Convert current path to symlink path for display
-        display_current = real_path.replace('/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs',
-                                          '/Users/yzats/iCloudDrive')
-        
         return jsonify({
-            'current_path': display_current,
+            'current_path': real_path,
             'items': items
         })
         
@@ -308,9 +299,12 @@ def browse_files():
     
     
     try:
-        # Special handling for iCloud Drive paths
-        if ('/Users/yzats/iCloudDrive' in path or 
-            '/Users/yzats/Library/Mobile Documents/com~apple~CloudDocs' in path):
+        # Get user's home directory dynamically for iCloud detection
+        home_dir = str(Path.home())
+        icloud_real_path = f"{home_dir}/Library/Mobile Documents/com~apple~CloudDocs"
+        
+        # Special handling for iCloud Drive paths (use real path pattern)
+        if icloud_real_path in path or '/Library/Mobile Documents/com~apple~CloudDocs' in path:
             return handle_icloud_drive_access(path)
         
         current_path = Path(path)
@@ -341,22 +335,22 @@ def browse_files():
         
         # Add special shortcuts when in home directory
         if current_path == Path.home():
-            # Add iCloud Drive shortcut if symlink exists and is accessible
-            icloud_symlink = Path.home() / 'iCloudDrive'
-            if icloud_symlink.exists():
+            # Add iCloud Drive shortcut if it exists and is accessible
+            icloud_path = Path(icloud_real_path)
+            if icloud_path.exists():
                 try:
-                    # Test if we can actually access it
-                    list(icloud_symlink.iterdir())
+                    # Test if we can actually access it (will be handled by special handler)
                     items.append({
                         'name': '📱 iCloud Drive',
-                        'path': str(icloud_symlink),
+                        'path': str(icloud_path),
                         'type': 'directory',
                         'is_parent': False,
                         'is_shortcut': True
                     })
-                except (PermissionError, OSError):
+                    logger.debug(f"Added iCloud Drive shortcut: {icloud_path}")
+                except Exception as e:
                     # Don't show the shortcut if we can't access it
-                    logger.debug("iCloud Drive shortcut hidden due to permission issues")
+                    logger.debug(f"iCloud Drive shortcut hidden: {e}")
         
         # List directory contents
         try:
