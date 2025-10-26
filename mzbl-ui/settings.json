@@ -1,0 +1,12 @@
+{
+  "image_uploader": {
+    "icloud_path": "/Users/yzats/iCloudDrive/MZBL/SQS Upload",
+    "dry_run": false,
+    "force_refresh": false
+  },
+  "stock_remover": {
+    "csv_file": "/Users/yzats/devl/mzbl/sqs-stock-remover/test-remove-1.csv",
+    "dry_run": true,
+    "force_refresh": true
+  }
+}

@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}MZBL Management UI - Home{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <p class="lead text-muted">
+            Manage your Squarespace inventory and image uploads through a simple web interface.
+        </p>
+    </div>
+</div>
+
+<!-- Main Action Cards -->
+<div class="row g-4 mb-5">
+    <div class="col-md-6">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <i class="bi bi-cloud-upload display-1 text-primary"></i>
+                </div>
+                <h3 class="card-title">Upload Images</h3>
+                <p class="card-text">
+                    Upload product images from iCloud folders to Squarespace products.
+
+                </p>
+                <button class="btn btn-primary btn-lg" onclick="showImageUploader()">
+                    <i class="bi bi-upload me-2"></i>Start Upload
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <i class="bi bi-box-seam display-1 text-danger"></i>
+                </div>
+                <h3 class="card-title">Clear Inventory</h3>
+                <p class="card-text">
+                    Set stock levels to zero for products listed in a CSV file.
+                    Useful for bulk inventory management and clearance operations.
+                </p>
+                <button class="btn btn-danger btn-lg" onclick="showStockRemover()">
+                    <i class="bi bi-dash-circle me-2"></i>Clear Stock
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Image Uploader Form -->
+<div id="image-uploader-section" class="card mb-4" style="display: none;">
+    <div class="card-header bg-primary text-white">
+        <h4 class="mb-0">
+            <i class="bi bi-cloud-upload me-2"></i>Image Uploader
+            <button type="button" class="btn btn-sm btn-outline-light float-end" onclick="hideAllSections()">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </h4>
+    </div>
+    <div class="card-body">
+        <form id="image-uploader-form">
+            <div class="row g-3">
+                <div class="col-12">
+                    <label for="icloud-path" class="form-label">
+                        <i class="bi bi-folder me-1"></i>iCloud Folder Path
+                    </label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="icloud-path" name="icloud_path" 
+                               placeholder="Select iCloud folder containing date/SKU structure">
+                        <button class="btn btn-outline-secondary" type="button" onclick="browseFolder('icloud-path')">
+                            <i class="bi bi-folder-fill"></i> Browse
+                        </button>
+                    </div>
+                    <div class="form-text">
+                        Expected structure: /path/to/folder/YYYY-MM-DD/SKU/images
+                    </div>
+                </div>
+                
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="upload-dry-run" name="dry_run" checked>
+                        <label class="form-check-label" for="upload-dry-run">
+                            <i class="bi bi-eye me-1"></i>Dry Run (Preview only, don't make changes)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="upload-force-refresh" name="force_refresh">
+                        <label class="form-check-label" for="upload-force-refresh">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Force Refresh (Ignore cache, download fresh inventory)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary btn-lg me-2" id="upload-submit-btn">
+                        <i class="bi bi-play-fill me-2"></i>Start Upload
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="hideAllSections()">
+                        <i class="bi bi-x-circle me-2"></i>Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Stock Remover Form -->
+<div id="stock-remover-section" class="card mb-4" style="display: none;">
+    <div class="card-header bg-danger text-white">
+        <h4 class="mb-0">
+            <i class="bi bi-box-seam me-2"></i>Stock Remover
+            <button type="button" class="btn btn-sm btn-outline-light float-end" onclick="hideAllSections()">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </h4>
+    </div>
+    <div class="card-body">
+        <form id="stock-remover-form">
+            <div class="row g-3">
+                <div class="col-12">
+                    <label for="csv-file" class="form-label">
+                        <i class="bi bi-file-earmark-spreadsheet me-1"></i>CSV File <span class="text-danger">*</span>
+                    </label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="csv-file" name="csv_file" 
+                               placeholder="Select CSV file containing SKUs" required>
+                        <button class="btn btn-outline-secondary" type="button" onclick="browseFile('csv-file')">
+                            <i class="bi bi-file-earmark-spreadsheet"></i> Browse
+                        </button>
+                    </div>
+                    <div class="form-text">
+                        CSV should contain SKUs in first column or a column named "SKU"
+                    </div>
+                </div>
+                
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="stock-dry-run" name="dry_run" checked>
+                        <label class="form-check-label" for="stock-dry-run">
+                            <i class="bi bi-eye me-1"></i>Dry Run (Preview only, don't make changes)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="stock-force-refresh" name="force_refresh">
+                        <label class="form-check-label" for="stock-force-refresh">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Force Refresh (Ignore cache, download fresh inventory)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="col-12">
+                    <button type="submit" class="btn btn-danger btn-lg me-2" id="stock-submit-btn">
+                        <i class="bi bi-play-fill me-2"></i>Start Process
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="hideAllSections()">
+                        <i class="bi bi-x-circle me-2"></i>Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Process Status and Logs -->
+<div id="process-status-section" class="card" style="display: none;">
+    <div class="card-header">
+        <h4 class="mb-0">
+            <i class="bi bi-activity me-2"></i>Process Status
+            <span id="process-status-badge" class="badge bg-secondary ms-2">Unknown</span>
+            <button type="button" class="btn btn-sm btn-outline-danger float-end" id="stop-process-btn" onclick="stopProcess()">
+                <i class="bi bi-stop-fill me-1"></i>Stop
+            </button>
+        </h4>
+    </div>
+    <div class="card-body">
+        <div id="process-logs" class="bg-dark text-light p-3 rounded" style="height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.9em;">
+            <div class="text-muted">Waiting for process to start...</div>
+        </div>
+        <div class="mt-3">
+            <button type="button" class="btn btn-secondary" onclick="hideProcessStatus()">
+                <i class="bi bi-x-circle me-2"></i>Close
+            </button>
+            <button type="button" class="btn btn-outline-primary" onclick="clearLogs()">
+                <i class="bi bi-trash me-2"></i>Clear Logs
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- File Browser Modal -->
+<div class="modal fade" id="file-browser-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-folder me-2"></i>Select <span id="browser-type">Folder</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="bi bi-folder"></i>
+                        </span>
+                        <input type="text" class="form-control" id="current-path" readonly>
+                    </div>
+                </div>
+                <div id="file-list" class="list-group" style="max-height: 400px; overflow-y: auto;">
+                    <div class="text-center p-3">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="select-path-btn" onclick="selectCurrentPath()">
+                    Select Current Path
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- File Browser Modal -->
+<div class="modal fade" id="file-browser-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-folder me-2"></i>Select <span id="browser-type">Folder</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="current-path" class="form-label">Current Path:</label>
+                    <input type="text" class="form-control" id="current-path" readonly>
+                </div>
+                <div id="file-list" class="list-group" style="max-height: 400px; overflow-y: auto;">
+                    <!-- Files and folders will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="selectCurrentPath()">Select</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<!-- All JavaScript functionality is handled by the external app.js file -->
+{% endblock %}
