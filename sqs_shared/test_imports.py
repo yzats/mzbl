@@ -27,12 +27,8 @@ except ImportError as e:
     print(f"❌ Failed to import rate_limiter: {e}")
     sys.exit(1)
 
-try:
-    from sqs_shared import config
-    print("✅ config submodule imports successfully")
-except ImportError as e:
-    print(f"❌ Failed to import config: {e}")
-    sys.exit(1)
+# Config module removed - no longer part of sqs_shared
+# Scripts import config directly from parent directory
 
 # Test that main exports are available
 try:
@@ -42,12 +38,8 @@ except ImportError as e:
     print(f"❌ rate_limited not exported: {e}")
     sys.exit(1)
 
-try:
-    from sqs_shared import load_config_from_path, load_config_from_env
-    print("✅ config helpers are exported")
-except ImportError as e:
-    print(f"❌ config helpers not exported: {e}")
-    sys.exit(1)
+# Config helpers removed - no longer part of sqs_shared
+# Scripts import config directly from parent directory
 
 # Check __all__ exports
 print(f"\n📦 Exported items: {sqs_shared.__all__}")

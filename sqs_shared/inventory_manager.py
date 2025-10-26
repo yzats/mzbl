@@ -32,7 +32,8 @@ class SquarespaceInventoryManager:
         api_key: str,
         site_id: Optional[str] = None,
         cache_filename: str = "squarespace_products_cache.json",
-        requests_per_minute: int = 300
+        requests_per_minute: int = 300,
+        non_interactive: bool = False
     ):
         """
         Initialize the inventory manager.
@@ -42,6 +43,7 @@ class SquarespaceInventoryManager:
             site_id: Squarespace site ID (optional, for future use)
             cache_filename: Path to cache file
             requests_per_minute: API rate limit (requests per minute)
+            non_interactive: If True, don't prompt user for input
         """
         self.api_key = api_key
         self.site_id = site_id
@@ -53,6 +55,7 @@ class SquarespaceInventoryManager:
         }
         self.cache_filename = cache_filename
         self.requests_per_minute = requests_per_minute
+        self.non_interactive = non_interactive
         
         # Internal caches
         self._products_cache = None
@@ -122,13 +125,19 @@ class SquarespaceInventoryManager:
     
     def get_products_with_cache(self, force_refresh: bool = False) -> List[Dict]:
         """
-        Get products using file cache with user prompting for refresh.
+        Get products using file cache with optional user prompting for refresh.
         
         Args:
             force_refresh: If True, download fresh inventory without prompting
         
         Returns:
             List of product dictionaries
+            
+        Behavior:
+            - If force_refresh=True: Always download fresh inventory
+            - If no cache exists: Download fresh inventory
+            - If cache exists and non_interactive=True: Use cached inventory
+            - If cache exists and non_interactive=False: Prompt user for choice
         """
         cache_age = self.get_cache_age()
         
@@ -147,26 +156,34 @@ class SquarespaceInventoryManager:
             self._products_cache = products
             return products
         else:
-            # Cache file exists, prompt user
+            # Cache file exists
             age_str = self.format_cache_age(cache_age)
             print(f"\n📁 Found cached inventory file: {self.cache_filename}")
             print(f"🕐 Cache age: {age_str} old")
             
-            while True:
-                response = input("\n🔄 Download fresh inventory from Squarespace? (y/n): ").strip().lower()
-                if response in ['y', 'yes']:
-                    logger.info("📥 Downloading fresh inventory from Squarespace...")
-                    products = self.get_products()
-                    self.save_to_cache(products)
-                    self._products_cache = products
-                    return products
-                elif response in ['n', 'no']:
-                    logger.info("📂 Using cached inventory...")
-                    products = self.load_from_cache()
-                    self._products_cache = products
-                    return products
-                else:
-                    print("Please enter 'y' or 'n'")
+            if self.non_interactive:
+                # Non-interactive mode: use existing cache
+                logger.info("📂 Non-interactive mode: Using cached inventory...")
+                products = self.load_from_cache()
+                self._products_cache = products
+                return products
+            else:
+                # Interactive mode: prompt user
+                while True:
+                    response = input("\n🔄 Download fresh inventory from Squarespace? (y/n): ").strip().lower()
+                    if response in ['y', 'yes']:
+                        logger.info("📥 Downloading fresh inventory from Squarespace...")
+                        products = self.get_products()
+                        self.save_to_cache(products)
+                        self._products_cache = products
+                        return products
+                    elif response in ['n', 'no']:
+                        logger.info("📂 Using cached inventory...")
+                        products = self.load_from_cache()
+                        self._products_cache = products
+                        return products
+                    else:
+                        print("Please enter 'y' or 'n'")
     
     def get_cache_age(self) -> Optional[timedelta]:
         """

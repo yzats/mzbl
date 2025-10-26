@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class SquarespaceStockRemover:
     """Manages setting stock levels to 0 for specified products"""
     
-    def __init__(self, dry_run=False, cache_filename="squarespace_products_cache.json", force_refresh=False):
+    def __init__(self, dry_run=False, cache_filename="squarespace_products_cache.json", force_refresh=False, non_interactive=False):
         """
         Initialize the stock remover.
         
@@ -40,6 +40,7 @@ class SquarespaceStockRemover:
             dry_run: If True, preview changes without making them
             cache_filename: Path to cache file for products
             force_refresh: If True, force download fresh inventory
+            non_interactive: If True, don't prompt user for input
         """
         self.api_key = SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY
         self.site_id = SQUARESPACE_SITE_ID
@@ -57,7 +58,8 @@ class SquarespaceStockRemover:
             api_key=SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY,
             site_id=SQUARESPACE_SITE_ID,
             cache_filename=cache_filename,
-            requests_per_minute=REQUESTS_PER_MINUTE
+            requests_per_minute=REQUESTS_PER_MINUTE,
+            non_interactive=non_interactive
         )
         
         # Statistics tracking
@@ -395,6 +397,11 @@ Examples:
         type=str,
         help='Log output to specified file (default: stock_remover.log)'
     )
+    parser.add_argument(
+        '--non-interactive',
+        action='store_true',
+        help='Run in non-interactive mode (no prompts for cache refresh)'
+    )
     
     args = parser.parse_args()
     
@@ -432,7 +439,8 @@ Examples:
     # Create remover instance
     remover = SquarespaceStockRemover(
         dry_run=args.dry_run,
-        force_refresh=args.force_refresh
+        force_refresh=args.force_refresh,
+        non_interactive=args.non_interactive
     )
     
     # Process the CSV

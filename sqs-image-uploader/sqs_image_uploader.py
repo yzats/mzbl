@@ -31,7 +31,7 @@ from config import SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLD
 logger = logging.getLogger(__name__)
 
 class SquarespaceImageUploader:
-    def __init__(self, dry_run=False, icloud_path=None, cache_filename="squarespace_products_cache.json", force_refresh=False):
+    def __init__(self, dry_run=False, icloud_path=None, cache_filename="squarespace_products_cache.json", force_refresh=False, non_interactive=False):
         self.api_key = SQUARESPACE_PRODUCTS_RW_KEY
         self.site_id = SQUARESPACE_SITE_ID
         self.base_url = f"https://api.squarespace.com/1.0/commerce/products"
@@ -49,7 +49,8 @@ class SquarespaceImageUploader:
             api_key=SQUARESPACE_PRODUCTS_RW_KEY,
             site_id=SQUARESPACE_SITE_ID,
             cache_filename=cache_filename,
-            requests_per_minute=REQUESTS_PER_MINUTE
+            requests_per_minute=REQUESTS_PER_MINUTE,
+            non_interactive=non_interactive
         )
         
         # Statistics tracking
@@ -67,34 +68,6 @@ class SquarespaceImageUploader:
         
         logger.info(f"📁 Using iCloud folder: {self.icloud_path}")
     
-    def debug_product_images(self, product: Dict) -> None:
-        """Debug method to show all image information for a product"""
-        sku = product.get('sku', 'Unknown')
-        logger.info(f"🔍 DEBUG: Image analysis for SKU {sku}")
-        
-        variants = product.get('variants', [])
-        logger.info(f"📊 Product has {len(variants)} variants")
-        
-        for i, variant in enumerate(variants):
-            variant_id = variant.get('id', 'Unknown')
-            images = variant.get('images', [])
-            logger.info(f"   Variant {i+1} (ID: {variant_id}): {len(images)} images")
-            
-            for j, image in enumerate(images):
-                image_id = image.get('id', 'Unknown')
-                filename = image.get('filename', 'Unknown')
-                url = image.get('url', 'Unknown')
-                logger.info(f"     Image {j+1}: ID={image_id}, Filename={filename}")
-                logger.info(f"       URL: {url}")
-        
-        # Also check product-level images
-        product_images = product.get('images', [])
-        if product_images:
-            for j, image in enumerate(product_images):
-                image_id = image.get('id', 'Unknown')
-                filename = image.get('filename', 'Unknown')
-                logger.info(f"   Product Image {j+1}: ID={image_id}, Filename={filename}")
-
     def should_skip_product(self, product: Dict) -> Tuple[bool, str]:
         """
         Check if product should be skipped based on business rules.
@@ -335,11 +308,6 @@ Examples:
     )
 
     parser.add_argument(
-        '--debug-sku',
-        type=str,
-        help='Debug a specific SKU to see its current images and structure'
-    )
-    parser.add_argument(
         '--force-refresh', '-f',
         action='store_true',
         help='Force download fresh inventory without prompting (ignores cache)'
@@ -348,6 +316,11 @@ Examples:
         '--log', '-l',
         type=str,
         help='Log output to specified file (default: squarespace_upload.log)'
+    )
+    parser.add_argument(
+        '--non-interactive',
+        action='store_true',
+        help='Run in non-interactive mode (no prompts for cache refresh)'
     )
     
     args = parser.parse_args()
@@ -386,18 +359,7 @@ Examples:
         sys.exit(1)
     
     # Create uploader instance
-    uploader = SquarespaceImageUploader(dry_run=args.dry_run, icloud_path=icloud_path, force_refresh=args.force_refresh)
-    
-    # Handle debug options
-    if args.debug_sku:
-        # Load products first for debug
-        uploader.inventory_manager.get_products_with_cache(force_refresh=args.force_refresh)
-        product = uploader.inventory_manager.get_product_by_sku(args.debug_sku)
-        if product:
-            uploader.debug_product_images(product)
-        else:
-            logger.error(f"Product with SKU {args.debug_sku} not found")
-        return
+    uploader = SquarespaceImageUploader(dry_run=args.dry_run, icloud_path=icloud_path, force_refresh=args.force_refresh, non_interactive=args.non_interactive)
     
     # Process the upload
     uploader.process_icloud_folder()

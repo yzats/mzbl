@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Test imports
 try:
-    from sqs_shared import SquarespaceInventoryManager, rate_limited, load_config_from_path
+    from sqs_shared import SquarespaceInventoryManager, rate_limited
     print("✅ Successfully imported sqs_shared library")
 except ImportError as e:
     print(f"❌ Failed to import sqs_shared library: {e}")
