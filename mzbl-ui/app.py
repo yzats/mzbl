@@ -51,6 +51,7 @@ class ProcessManager:
     def __init__(self):
         self.processes = {}
         self.logs = {}
+        self.log_counters = {}  # Track total lines written per process
     
     def start_process(self, process_id, command, cwd=None):
         """Start a new process and capture its output"""
@@ -59,18 +60,23 @@ class ProcessManager:
                 return False, "Process already running"
         
         try:
-            # Start process
+            # Start process with unbuffered output
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+            
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
-                bufsize=1,
-                cwd=cwd
+                bufsize=1,  # Line buffered
+                cwd=cwd,
+                env=env
             )
             
             self.processes[process_id] = process
             self.logs[process_id] = []
+            self.log_counters[process_id] = 0
             
             # Start log capture thread
             thread = threading.Thread(
@@ -89,15 +95,16 @@ class ProcessManager:
     def _capture_output(self, process_id, process):
         """Capture process output in a separate thread"""
         try:
+            # Simple line-by-line reading
             for line in iter(process.stdout.readline, ''):
                 if line:
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     log_entry = f"[{timestamp}] {line.rstrip()}"
                     self.logs[process_id].append(log_entry)
+                    self.log_counters[process_id] += 1
                     
-                    # Keep only last 1000 lines to prevent memory issues
-                    if len(self.logs[process_id]) > 1000:
-                        self.logs[process_id] = self.logs[process_id][-1000:]
+                    # Don't truncate logs during execution to avoid breaking SSE stream indices
+                    # Memory usage: ~1KB per line x few thousand lines = few MB max (acceptable)
             
             process.wait()
             
@@ -109,6 +116,8 @@ class ProcessManager:
             
         except Exception as e:
             logger.error(f"Error capturing output for {process_id}: {e}")
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.logs[process_id].append(f"[{timestamp}] Error capturing output: {e}")
     
     def get_process_status(self, process_id):
         """Get the status of a process"""
@@ -392,8 +401,8 @@ def upload_images():
     try:
         data = request.json
         
-        # Build command
-        command = [sys.executable, str(PARENT_DIR / 'sqs-image-uploader' / 'sqs_image_uploader.py')]
+        # Build command with unbuffered Python
+        command = [sys.executable, '-u', str(PARENT_DIR / 'sqs-image-uploader' / 'sqs_image_uploader.py')]
         
         if data.get('dry_run'):
             command.extend(['--dry-run'])
@@ -434,8 +443,8 @@ def clear_inventory():
         if not data.get('csv_file'):
             return jsonify({'success': False, 'error': 'CSV file is required'}), 400
         
-        # Build command
-        command = [sys.executable, str(PARENT_DIR / 'sqs-stock-remover' / 'sqs_stock_remover.py')]
+        # Build command with unbuffered Python
+        command = [sys.executable, '-u', str(PARENT_DIR / 'sqs-stock-remover' / 'sqs_stock_remover.py')]
         command.extend(['--csv', data['csv_file']])
         
         if data.get('dry_run'):
