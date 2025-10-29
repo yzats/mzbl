@@ -305,6 +305,7 @@ def browse_files():
     """Browse files and directories"""
     path = request.args.get('path', str(Path.home()))
     file_type = request.args.get('type', 'directory')  # 'directory' or 'file'
+    file_extension = request.args.get('extension', '')  # e.g., '.csv'
     
     
     try:
@@ -368,6 +369,15 @@ def browse_files():
                     continue  # Skip hidden files
                 
                 item_type = 'directory' if item.is_dir() else 'file'
+                
+                # Apply filtering based on browser type
+                if file_type == 'directory' and item_type == 'file':
+                    continue  # Skip files when browsing for directories
+                
+                # Apply file extension filter if specified (for file browsing)
+                if file_extension and item_type == 'file':
+                    if not item.name.lower().endswith(file_extension.lower()):
+                        continue  # Skip files that don't match extension
                 
                 # For symlinks, use the symlink path to avoid permission issues
                 if item.is_symlink():

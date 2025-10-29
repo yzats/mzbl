@@ -8,6 +8,7 @@ const AppState = {
     currentProcessId: null,
     currentTargetInput: null,
     currentBrowserType: 'directory',
+    currentFileExtension: '',
     eventSource: null,
     settings: {}
 };
@@ -45,6 +46,7 @@ function setupEventListeners() {
     document.getElementById('file-browser-modal').addEventListener('hidden.bs.modal', function() {
         AppState.currentTargetInput = null;
         AppState.currentBrowserType = 'directory';
+        AppState.currentFileExtension = '';
     });
     
     // Handle window beforeunload to cleanup event sources
@@ -432,6 +434,7 @@ function clearLogs() {
 function browseFolder(targetInputId) {
     AppState.currentTargetInput = targetInputId;
     AppState.currentBrowserType = 'directory';
+    AppState.currentFileExtension = '';
     
     const browserType = document.getElementById('browser-type');
     if (browserType) {
@@ -444,10 +447,11 @@ function browseFolder(targetInputId) {
 function browseFile(targetInputId) {
     AppState.currentTargetInput = targetInputId;
     AppState.currentBrowserType = 'file';
+    AppState.currentFileExtension = '.csv';  // Only show CSV files
     
     const browserType = document.getElementById('browser-type');
     if (browserType) {
-        browserType.textContent = 'File';
+        browserType.textContent = 'CSV File';
     }
     
     openFileBrowser();
@@ -470,7 +474,10 @@ function loadDirectoryContents(path) {
     
     fileList.innerHTML = '<div class="text-center p-3"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
     
-    const url = `/api/browse?path=${encodeURIComponent(path)}&type=${AppState.currentBrowserType}`;
+    let url = `/api/browse?path=${encodeURIComponent(path)}&type=${AppState.currentBrowserType}`;
+    if (AppState.currentFileExtension) {
+        url += `&extension=${encodeURIComponent(AppState.currentFileExtension)}`;
+    }
     
     fetch(url)
         .then(response => {
@@ -599,132 +606,6 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
-}
-
-/**
- * File Browser Functions
- */
-function browseFolder(targetInputId) {
-    AppState.currentTargetInput = targetInputId;
-    AppState.currentBrowserType = 'directory';
-    
-    const browserType = document.getElementById('browser-type');
-    if (browserType) {
-        browserType.textContent = 'Folder';
-    }
-    
-    openFileBrowser();
-}
-
-function browseFile(targetInputId) {
-    AppState.currentTargetInput = targetInputId;
-    AppState.currentBrowserType = 'file';
-    
-    const browserType = document.getElementById('browser-type');
-    if (browserType) {
-        browserType.textContent = 'File';
-    }
-    
-    openFileBrowser();
-}
-
-function openFileBrowser(path = null) {
-    const modalElement = document.getElementById('file-browser-modal');
-    if (!modalElement) {
-        showNotification('File browser not available', 'error');
-        return;
-    }
-    
-    const modal = new bootstrap.Modal(modalElement);
-    modal.show();
-    
-    const startPath = path || (AppState.currentTargetInput ? document.getElementById(AppState.currentTargetInput).value : '') || '';
-    loadDirectoryContents(startPath);
-}
-
-function loadDirectoryContents(path) {
-    const fileList = document.getElementById('file-list');
-    if (!fileList) return;
-    
-    fileList.innerHTML = '<div class="text-center p-3"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
-    
-    const url = `/api/browse?path=${encodeURIComponent(path)}&type=${AppState.currentBrowserType}`;
-    
-    fetch(url)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            const currentPath = document.getElementById('current-path');
-            if (currentPath) {
-                currentPath.value = data.current_path;
-            }
-            
-            fileList.innerHTML = '';
-            
-            if (!data.items || data.items.length === 0) {
-                fileList.innerHTML = '<div class="text-center p-3 text-muted">No items found</div>';
-                return;
-            }
-            
-            data.items.forEach(item => {
-                const listItem = document.createElement('a');
-                listItem.className = 'list-group-item list-group-item-action d-flex align-items-center';
-                listItem.href = '#';
-                
-                let icon = 'bi-file-earmark';
-                let iconColor = 'text-muted';
-                
-                if (item.type === 'directory') {
-                    icon = item.is_parent ? 'bi-arrow-up' : 'bi-folder-fill';
-                    iconColor = item.is_parent ? 'text-secondary' : 'text-primary';
-                }
-                
-                // Special styling for shortcuts
-                if (item.is_shortcut) {
-                    iconColor = 'text-info';
-                }
-                
-                listItem.innerHTML = `
-                    <i class="bi ${icon} ${iconColor} me-3"></i>
-                    <span class="flex-grow-1">${escapeHtml(item.name)}</span>
-                `;
-                
-                listItem.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    if (item.type === 'directory') {
-                        loadDirectoryContents(item.path);
-                    } else if (AppState.currentBrowserType === 'file') {
-                        const currentPath = document.getElementById('current-path');
-                        if (currentPath) {
-                            currentPath.value = item.path;
-                        }
-                    }
-                });
-                
-                fileList.appendChild(listItem);
-            });
-        })
-        .catch(error => {
-            console.error('Error loading directory:', error);
-            fileList.innerHTML = '<div class="alert alert-danger">Error loading directory contents</div>';
-        });
-}
-
-function selectCurrentPath() {
-    const selectedPath = document.getElementById('current-path').value;
-    if (!selectedPath || !AppState.currentTargetInput) return;
-    
-    document.getElementById(AppState.currentTargetInput).value = selectedPath;
-    
-    const modal = bootstrap.Modal.getInstance(document.getElementById('file-browser-modal'));
-    modal.hide();
-    
-    // Trigger change event to save settings
-    document.getElementById(AppState.currentTargetInput).dispatchEvent(new Event('change'));
 }
 
 // Export functions to global scope for inline event handlers
