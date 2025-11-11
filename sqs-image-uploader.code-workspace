@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "sqs-image-uploader"
+		},
+		{
+			"path": "sqs_shared"
+		}
+	],
+	"settings": {}
+}

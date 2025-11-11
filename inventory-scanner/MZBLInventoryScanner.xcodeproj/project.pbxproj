@@ -151,8 +151,6 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
-
-
 /* Begin PBXSourcesBuildPhase section */
 		A1234567890123456789001C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -296,8 +294,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MZBLInventoryScanner/MZBLInventoryScanner.entitlements;
-				CODE_SIGN_ENTITLEMENTS = MZBLInventoryScanner/MZBLInventoryScanner.entitlements;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"MZBLInventoryScanner/Preview Content\"";
 				DEVELOPMENT_TEAM = 8MDD26W4JA;
 				ENABLE_PREVIEWS = YES;
@@ -329,8 +326,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MZBLInventoryScanner/MZBLInventoryScanner.entitlements;
-				CODE_SIGN_ENTITLEMENTS = MZBLInventoryScanner/MZBLInventoryScanner.entitlements;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"MZBLInventoryScanner/Preview Content\"";
 				DEVELOPMENT_TEAM = 8MDD26W4JA;
 				ENABLE_PREVIEWS = YES;
