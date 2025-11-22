@@ -105,27 +105,56 @@ class SquarespaceImageUploader:
 
     @rate_limited(REQUESTS_PER_MINUTE)
     def _upload_image_impl(self, product_id: str, image_path: Path) -> bool:
-        """Upload implementation with rate limiting"""
-        try:
-            # Upload the image file
-            with open(image_path, 'rb') as f:
-                files = {'file': (image_path.name, f, 'image/jpeg')}
-                upload_response = requests.post(
-                    f"https://api.squarespace.com/1.0/commerce/products/{product_id}/images",
-                    headers={'Authorization': f'Bearer {self.api_key}'},
-                    files=files
-                )
-                upload_response.raise_for_status()
-            
-            logger.info(f"Successfully uploaded {image_path.name} to product {product_id}")
-            return True
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to upload {image_path.name}: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error uploading {image_path.name}: {e}")
-            return False
+        """Upload implementation with rate limiting and retry logic"""
+        
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                # Upload the image file
+                with open(image_path, 'rb') as f:
+                    files = {'file': (image_path.name, f, 'image/jpeg')}
+                    upload_response = requests.post(
+                        f"https://api.squarespace.com/1.0/commerce/products/{product_id}/images",
+                        headers={'Authorization': f'Bearer {self.api_key}'},
+                        files=files
+                    )
+                    
+                    # Check for client errors (4xx) - don't retry these
+                    if 400 <= upload_response.status_code < 500:
+                        logger.error(f"Failed to upload {image_path.name}: Client error {upload_response.status_code} - {upload_response.text}")
+                        return False
+                    
+                    # Raise exception for other non-2xx status codes
+                    upload_response.raise_for_status()
+                
+                logger.info(f"Successfully uploaded {image_path.name} to product {product_id}")
+                return True
+                
+            except requests.exceptions.RequestException as e:
+                is_last_attempt = (attempt == MAX_RETRIES)
+                
+                if is_last_attempt:
+                    logger.error(f"Failed to upload {image_path.name} after {MAX_RETRIES + 1} attempts: {e}")
+                    return False
+                else:
+                    # Calculate exponential backoff delay: 2^attempt seconds
+                    delay = 2 ** attempt
+                    logger.warning(f"Upload attempt {attempt + 1} failed for {image_path.name}: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    
+            except Exception as e:
+                is_last_attempt = (attempt == MAX_RETRIES)
+                
+                if is_last_attempt:
+                    logger.error(f"Unexpected error uploading {image_path.name} after {MAX_RETRIES + 1} attempts: {e}")
+                    return False
+                else:
+                    # Calculate exponential backoff delay: 2^attempt seconds
+                    delay = 2 ** attempt
+                    logger.warning(f"Upload attempt {attempt + 1} failed for {image_path.name}: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+        
+        # Should never reach here, but just in case
+        return False
     
     def upload_image(self, product_id: str, image_path: Path) -> bool:
         """Upload a single image to a product"""
