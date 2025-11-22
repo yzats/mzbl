@@ -59,3 +59,4 @@ Thumbs.db
 *.temp 
 *.csv
 mzbl-ui/settings.json
+sqs-stock-remover/squarespace_products_cache.json
