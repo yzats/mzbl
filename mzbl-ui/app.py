@@ -12,7 +12,6 @@ import threading
 import time
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
-from datetime import datetime
 import logging
 
 # Add parent directory to path for config access
@@ -33,7 +32,7 @@ LOG_DIR.mkdir(exist_ok=True)
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(message)s',
     handlers=[
         logging.FileHandler(LOG_DIR / 'mzbl-ui.log'),
         logging.StreamHandler()
@@ -98,9 +97,7 @@ class ProcessManager:
             # Simple line-by-line reading
             for line in iter(process.stdout.readline, ''):
                 if line:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    log_entry = f"[{timestamp}] {line.rstrip()}"
-                    self.logs[process_id].append(log_entry)
+                    self.logs[process_id].append(line.rstrip())
                     self.log_counters[process_id] += 1
                     
                     # Don't truncate logs during execution to avoid breaking SSE stream indices
@@ -109,15 +106,13 @@ class ProcessManager:
             process.wait()
             
             # Add completion message
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             exit_code = process.returncode
-            status = "completed successfully" if exit_code == 0 else f"failed with exit code {exit_code}"
-            self.logs[process_id].append(f"[{timestamp}] Process {status}")
+            status = "✅ Process completed successfully" if exit_code == 0 else f"❌ Process failed with exit code {exit_code}"
+            self.logs[process_id].append(status)
             
         except Exception as e:
             logger.error(f"Error capturing output for {process_id}: {e}")
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            self.logs[process_id].append(f"[{timestamp}] Error capturing output: {e}")
+            self.logs[process_id].append(f"❌ Error capturing output: {e}")
     
     def get_process_status(self, process_id):
         """Get the status of a process"""

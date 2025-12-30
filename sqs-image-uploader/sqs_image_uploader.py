@@ -358,7 +358,7 @@ Examples:
     log_file = args.log if args.log else 'squarespace_upload.log'
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='%(message)s',
         handlers=[
             logging.FileHandler(log_file),
             logging.StreamHandler(sys.stdout)
