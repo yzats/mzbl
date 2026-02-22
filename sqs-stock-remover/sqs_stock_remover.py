@@ -2,8 +2,9 @@
 """
 Squarespace Stock Remover
 
-This script sets stock levels to 0 for products listed in a CSV file.
-It uses the Squarespace Inventory API to adjust stock quantities.
+This script sets stock levels to 0 for products listed in a CSV file (default),
+or with --hard-delete removes products from the store via the Squarespace Products API.
+Uses the Squarespace Inventory API for stock adjustments and Products API for deletion.
 
 Requirements:
 - Squarespace API credentials in config.py (in parent folder)
@@ -30,9 +31,9 @@ logger = logging.getLogger(__name__)
 
 
 class SquarespaceStockRemover:
-    """Manages setting stock levels to 0 for specified products"""
+    """Manages setting stock levels to 0 or deleting products for specified SKUs"""
     
-    def __init__(self, dry_run=False, cache_filename="squarespace_products_cache.json", force_refresh=False, non_interactive=False):
+    def __init__(self, dry_run=False, cache_filename="squarespace_products_cache.json", force_refresh=False, non_interactive=False, hard_delete=False):
         """
         Initialize the stock remover.
         
@@ -41,10 +42,12 @@ class SquarespaceStockRemover:
             cache_filename: Path to cache file for products
             force_refresh: If True, force download fresh inventory
             non_interactive: If True, don't prompt user for input
+            hard_delete: If True, delete products via API instead of setting stock to 0
         """
         self.api_key = SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY
         self.site_id = SQUARESPACE_SITE_ID
         self.inventory_url = "https://api.squarespace.com/1.0/commerce/inventory/adjustments"
+        self.products_base_url = "https://api.squarespace.com/1.0/commerce/products"
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
@@ -52,6 +55,7 @@ class SquarespaceStockRemover:
         }
         self.dry_run = dry_run
         self.force_refresh = force_refresh
+        self.hard_delete = hard_delete
         
         # Initialize inventory manager from shared library
         self.inventory_manager = SquarespaceInventoryManager(
@@ -64,9 +68,10 @@ class SquarespaceStockRemover:
         
         # Statistics tracking
         self.stats = {
-            'stock_changed': [],      # List of SKUs where stock was set to 0
+            'stock_changed': [],       # List of SKUs where stock was set to 0
+            'products_deleted': [],    # List of SKUs where product was deleted (hard_delete mode)
             'already_zero': [],        # List of SKUs already at 0
-            'sku_not_found': [],      # List of SKUs not found on Squarespace
+            'sku_not_found': [],       # List of SKUs not found on Squarespace
             'errors': []               # List of tuples (sku, reason)
         }
         
@@ -234,9 +239,53 @@ class SquarespaceStockRemover:
         
         return self._set_stock_to_zero_impl(variant_id, sku)
     
+    @rate_limited(REQUESTS_PER_MINUTE)
+    def _delete_product_impl(self, product_id: str, sku: str) -> bool:
+        """
+        Delete a product via Squarespace Products API (rate-limited implementation).
+        
+        Args:
+            product_id: Product ID to delete
+            sku: SKU for logging purposes
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            url = f"{self.products_base_url}/{product_id}"
+            response = requests.delete(url, headers=self.headers)
+            if response.status_code == 204:
+                logger.info(f"✅ Successfully deleted product {product_id} (SKU: {sku})")
+                return True
+            else:
+                logger.error(f"❌ Failed to delete product {product_id} (SKU: {sku}): {response.status_code} - {response.text}")
+                return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Network error deleting product {product_id} (SKU: {sku}): {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Unexpected error deleting product {product_id} (SKU: {sku}): {e}")
+            return False
+    
+    def delete_product(self, product_id: str, sku: str) -> bool:
+        """
+        Delete a product from the store.
+        
+        Args:
+            product_id: Product ID to delete
+            sku: SKU for logging purposes
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would delete product {product_id} (SKU: {sku})")
+            return True
+        return self._delete_product_impl(product_id, sku)
+    
     def process_sku(self, sku: str) -> None:
         """
-        Process a single SKU - check stock and set to 0 if needed.
+        Process a single SKU - delete product (hard_delete) or set stock to 0.
         
         Args:
             sku: SKU to process
@@ -248,6 +297,14 @@ class SquarespaceStockRemover:
         if not product:
             logger.warning(f"❌ Product with SKU {sku} not found on Squarespace")
             self.stats['sku_not_found'].append(sku)
+            return
+        
+        if self.hard_delete:
+            product_id = product['id']
+            if self.delete_product(product_id, sku):
+                self.stats['products_deleted'].append(sku)
+            else:
+                self.stats['errors'].append((sku, "Delete failed"))
             return
         
         # Get variant stock information
@@ -324,19 +381,28 @@ class SquarespaceStockRemover:
         logger.info("📊 PROCESSING SUMMARY")
         logger.info("="*60)
         
-        # Stock changed
-        if self.stats['stock_changed']:
-            logger.info(f"✅ Stock set to 0 ({len(self.stats['stock_changed'])} SKUs):")
-            for sku in self.stats['stock_changed']:
-                logger.info(f"   • {sku}")
+        if self.hard_delete:
+            # Products deleted
+            if self.stats['products_deleted']:
+                logger.info(f"✅ Products deleted ({len(self.stats['products_deleted'])} SKUs):")
+                for sku in self.stats['products_deleted']:
+                    logger.info(f"   • {sku}")
+            else:
+                logger.info("ℹ️ No products were deleted")
         else:
-            logger.info("ℹ️ No stock levels were changed")
-        
-        # Already zero
-        if self.stats['already_zero']:
-            logger.info(f"\n✓ Already at 0 stock ({len(self.stats['already_zero'])} SKUs):")
-            for sku in self.stats['already_zero']:
-                logger.info(f"   • {sku}")
+            # Stock changed
+            if self.stats['stock_changed']:
+                logger.info(f"✅ Stock set to 0 ({len(self.stats['stock_changed'])} SKUs):")
+                for sku in self.stats['stock_changed']:
+                    logger.info(f"   • {sku}")
+            else:
+                logger.info("ℹ️ No stock levels were changed")
+            
+            # Already zero
+            if self.stats['already_zero']:
+                logger.info(f"\n✓ Already at 0 stock ({len(self.stats['already_zero'])} SKUs):")
+                for sku in self.stats['already_zero']:
+                    logger.info(f"   • {sku}")
         
         # SKUs not found
         if self.stats['sku_not_found']:
@@ -351,11 +417,17 @@ class SquarespaceStockRemover:
                 logger.info(f"   • {sku}: {reason}")
         
         # Total counts
-        total_processed = len(self.stats['stock_changed']) + len(self.stats['already_zero']) + len(self.stats['sku_not_found']) + len(self.stats['errors'])
+        total_processed = (
+            len(self.stats['stock_changed']) + len(self.stats['products_deleted']) +
+            len(self.stats['already_zero']) + len(self.stats['sku_not_found']) + len(self.stats['errors'])
+        )
         if total_processed > 0:
             logger.info(f"\n📈 Total SKUs processed: {total_processed}")
-            logger.info(f"   • Changed to 0: {len(self.stats['stock_changed'])}")
-            logger.info(f"   • Already at 0: {len(self.stats['already_zero'])}")
+            if self.hard_delete:
+                logger.info(f"   • Deleted: {len(self.stats['products_deleted'])}")
+            else:
+                logger.info(f"   • Changed to 0: {len(self.stats['stock_changed'])}")
+                logger.info(f"   • Already at 0: {len(self.stats['already_zero'])}")
             logger.info(f"   • Not found: {len(self.stats['sku_not_found'])}")
             logger.info(f"   • Errors: {len(self.stats['errors'])}")
         
@@ -370,7 +442,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --csv skus.csv                      # Normal mode
+  %(prog)s --csv skus.csv                      # Normal mode (set stock to 0)
+  %(prog)s --csv skus.csv --hard-delete        # Delete products from store
   %(prog)s --csv skus.csv --dry-run            # Preview changes without making them
   %(prog)s --csv skus.csv --force-refresh      # Force download fresh inventory
   %(prog)s --csv skus.csv --log mylog.log      # Log output to custom file
@@ -402,6 +475,11 @@ Examples:
         action='store_true',
         help='Run in non-interactive mode (no prompts for cache refresh)'
     )
+    parser.add_argument(
+        '--hard-delete',
+        action='store_true',
+        help='Delete products from the store via Squarespace API (default: only set stock to 0)'
+    )
     
     args = parser.parse_args()
     
@@ -421,6 +499,8 @@ Examples:
         logger.info("🔍 Starting Squarespace Stock Remover (DRY RUN MODE)")
     else:
         logger.info("🚀 Starting Squarespace Stock Remover")
+    if args.hard_delete:
+        logger.info("🗑️ Hard delete mode: products will be removed from the store")
     
     # Validate configuration
     if not SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY:
@@ -440,7 +520,8 @@ Examples:
     remover = SquarespaceStockRemover(
         dry_run=args.dry_run,
         force_refresh=args.force_refresh,
-        non_interactive=args.non_interactive
+        non_interactive=args.non_interactive,
+        hard_delete=args.hard_delete
     )
     
     # Process the CSV
