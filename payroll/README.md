@@ -17,7 +17,8 @@ A Python script that calculates regular and overtime hours according to Californ
   - Regular hours
   - Overtime at 1.5x rate
   - Overtime at 2x rate
-  - Employee totals across all workweeks
+  - **Overtime breakdown**: plain-language lines for each daily, 7th-day, and weekly overtime bucket (same math as totals)
+  - Employee totals across all workweeks (including merged breakdown across workweeks)
 
 ## Requirements
 
@@ -64,18 +65,25 @@ Employee: Julian Tobias (juliancat@icloud.com)
     Regular Hours: 15.63
     Overtime (1.5x): 0.25
     Overtime (2x): 0.00
+    Overtime breakdown:
+      - Daily overtime (12/15/2025): 0.25h at 1.5x (worked 8.25h; CA daily OT after 8h).
 
   Workweek: 12/18/2025 - 12/24/2025
     Total Hours: 37.48
     Regular Hours: 35.08
     Overtime (1.5x): 2.40
     Overtime (2x): 0.00
+    Overtime breakdown:
+      - Daily overtime (12/19/2025): 2.40h at 1.5x (worked 10.40h; CA daily OT after 8h).
 
   EMPLOYEE TOTAL:
     Total Hours: 53.37
     Regular Hours: 50.72
     Overtime (1.5x): 2.65
     Overtime (2x): 0.00
+    Overtime breakdown:
+      - Daily overtime (12/15/2025): 0.25h at 1.5x (worked 8.25h; CA daily OT after 8h).
+      - Daily overtime (12/19/2025): 2.40h at 1.5x (worked 10.40h; CA daily OT after 8h).
 ```
 
 ## California Overtime Rules Reference

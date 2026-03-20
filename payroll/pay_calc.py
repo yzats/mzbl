@@ -8,9 +8,10 @@ Processes Clockify time report CSV files.
 
 import csv
 import argparse
-from datetime import datetime, timedelta, time
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, time
 from collections import defaultdict
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 # Configuration
 WORKWEEK_START_DAY = 3  # 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, etc.
@@ -57,6 +58,13 @@ class TimeEntry:
             return None
 
 
+@dataclass
+class OvertimeExplanation:
+    """Human-readable reason for overtime hours in one workweek."""
+    sort_date: Optional[date]
+    message: str
+
+
 class OvertimeSummary:
     """Holds overtime calculation results."""
     def __init__(self):
@@ -64,6 +72,7 @@ class OvertimeSummary:
         self.regular_hours = 0.0
         self.overtime_1_5x = 0.0
         self.overtime_2x = 0.0
+        self.overtime_explanations: List[OvertimeExplanation] = []
     
     def add(self, other: 'OvertimeSummary'):
         """Add another summary to this one."""
@@ -71,6 +80,17 @@ class OvertimeSummary:
         self.regular_hours += other.regular_hours
         self.overtime_1_5x += other.overtime_1_5x
         self.overtime_2x += other.overtime_2x
+        self.overtime_explanations.extend(other.overtime_explanations)
+
+
+def _sorted_overtime_explanations(
+    items: List[OvertimeExplanation],
+) -> List[OvertimeExplanation]:
+    """Daily rows by date; workweek-level (weekly rule) rows last."""
+    return sorted(
+        items,
+        key=lambda e: (e.sort_date is None, e.sort_date or date.min),
+    )
 
 
 def parse_csv(filepath: str) -> List[TimeEntry]:
@@ -249,11 +269,31 @@ def apply_overtime_rules(daily_hours: Dict[datetime, float],
                 daily_regular[date] = 0.0
                 daily_ot_1_5x[date] = hours
                 daily_ot_2x[date] = 0.0
+                if daily_ot_1_5x[date] > 0:
+                    ds = date.strftime('%m/%d/%Y')
+                    summary.overtime_explanations.append(
+                        OvertimeExplanation(
+                            date,
+                            f"7th consecutive workday ({ds}): "
+                            f"{daily_ot_1_5x[date]:.2f}h at 1.5x "
+                            f"(no regular hours on 7th day).",
+                        )
+                    )
             else:
                 # First 8 hours at 1.5x, rest at 2x
                 daily_regular[date] = 0.0
                 daily_ot_1_5x[date] = 8.0
                 daily_ot_2x[date] = hours - 8.0
+                ds = date.strftime('%m/%d/%Y')
+                summary.overtime_explanations.append(
+                    OvertimeExplanation(
+                        date,
+                        f"7th consecutive workday ({ds}): "
+                        f"{daily_ot_1_5x[date]:.2f}h at 1.5x, "
+                        f"{daily_ot_2x[date]:.2f}h at 2x "
+                        f"(no regular hours on 7th day).",
+                    )
+                )
         else:
             # Normal daily rules
             if hours <= 8:
@@ -264,10 +304,30 @@ def apply_overtime_rules(daily_hours: Dict[datetime, float],
                 daily_regular[date] = 8.0
                 daily_ot_1_5x[date] = hours - 8.0
                 daily_ot_2x[date] = 0.0
+                if daily_ot_1_5x[date] > 0:
+                    ds = date.strftime('%m/%d/%Y')
+                    summary.overtime_explanations.append(
+                        OvertimeExplanation(
+                            date,
+                            f"Daily overtime ({ds}): "
+                            f"{daily_ot_1_5x[date]:.2f}h at 1.5x "
+                            f"(worked {hours:.2f}h; CA daily OT after 8h).",
+                        )
+                    )
             else:
                 daily_regular[date] = 8.0
                 daily_ot_1_5x[date] = 4.0
                 daily_ot_2x[date] = hours - 12.0
+                ds = date.strftime('%m/%d/%Y')
+                summary.overtime_explanations.append(
+                    OvertimeExplanation(
+                        date,
+                        f"Daily overtime ({ds}): "
+                        f"{daily_ot_1_5x[date]:.2f}h at 1.5x (hours 8–12), "
+                        f"{daily_ot_2x[date]:.2f}h at 2x (beyond 12h; "
+                        f"worked {hours:.2f}h total).",
+                    )
+                )
     
     # Calculate weekly totals
     total_hours = sum(daily_hours.values())
@@ -282,6 +342,14 @@ def apply_overtime_rules(daily_hours: Dict[datetime, float],
         hours_to_convert = total_regular - 40
         total_regular -= hours_to_convert
         total_ot_1_5x += hours_to_convert
+        summary.overtime_explanations.append(
+            OvertimeExplanation(
+                None,
+                f"Weekly overtime: {hours_to_convert:.2f}h moved from regular to 1.5x "
+                f"(workweek {total_hours:.2f}h > 40h; at most 40h may stay regular "
+                f"after daily rules).",
+            )
+        )
     
     summary.total_hours = total_hours
     summary.regular_hours = total_regular
@@ -296,6 +364,14 @@ def calculate_overtime_for_workweek(daily_hours: Dict[datetime.date, float],
     """Calculate overtime for a single employee's workweek."""
     seventh_days = find_consecutive_work_days(daily_hours, workweek_start)
     return apply_overtime_rules(daily_hours, seventh_days)
+
+
+def _print_overtime_breakdown(summary: OvertimeSummary, indent: str = "    ") -> None:
+    if summary.overtime_1_5x <= 0 and summary.overtime_2x <= 0:
+        return
+    print(f"{indent}Overtime breakdown:")
+    for exp in _sorted_overtime_explanations(summary.overtime_explanations):
+        print(f"{indent}  - {exp.message}")
 
 
 def print_summary(grouped_data: Dict[str, Dict[datetime, Dict[datetime.date, float]]]):
@@ -318,6 +394,7 @@ def print_summary(grouped_data: Dict[str, Dict[datetime, Dict[datetime.date, flo
             print(f"    Regular Hours: {summary.regular_hours:.2f}")
             print(f"    Overtime (1.5x): {summary.overtime_1_5x:.2f}")
             print(f"    Overtime (2x): {summary.overtime_2x:.2f}")
+            _print_overtime_breakdown(summary)
             print()
         
         print(f"  EMPLOYEE TOTAL:")
@@ -325,6 +402,7 @@ def print_summary(grouped_data: Dict[str, Dict[datetime, Dict[datetime.date, flo
         print(f"    Regular Hours: {employee_total.regular_hours:.2f}")
         print(f"    Overtime (1.5x): {employee_total.overtime_1_5x:.2f}")
         print(f"    Overtime (2x): {employee_total.overtime_2x:.2f}")
+        _print_overtime_breakdown(employee_total)
         print()
 
 
