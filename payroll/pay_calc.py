@@ -375,7 +375,7 @@ def _print_overtime_breakdown(summary: OvertimeSummary, indent: str = "    ") ->
 
 
 def print_summary(grouped_data: Dict[str, Dict[datetime, Dict[datetime.date, float]]]):
-    """Format and print results to console."""
+    """Format and print per-employee totals and overtime breakdown (no per-workweek section)."""
     for employee_key in sorted(grouped_data.keys()):
         user_name, email = employee_key.split('|')
         print(f"\nEmployee: {user_name} ({email})")
@@ -387,22 +387,12 @@ def print_summary(grouped_data: Dict[str, Dict[datetime, Dict[datetime.date, flo
             daily_hours = workweeks[workweek_start]
             summary = calculate_overtime_for_workweek(daily_hours, workweek_start)
             employee_total.add(summary)
-            
-            workweek_end = workweek_start + timedelta(days=6)
-            print(f"  Workweek: {workweek_start.strftime('%m/%d/%Y')} - {workweek_end.strftime('%m/%d/%Y')}")
-            print(f"    Total Hours: {summary.total_hours:.2f}")
-            print(f"    Regular Hours: {summary.regular_hours:.2f}")
-            print(f"    Overtime (1.5x): {summary.overtime_1_5x:.2f}")
-            print(f"    Overtime (2x): {summary.overtime_2x:.2f}")
-            _print_overtime_breakdown(summary)
-            print()
-        
-        print(f"  EMPLOYEE TOTAL:")
-        print(f"    Total Hours: {employee_total.total_hours:.2f}")
-        print(f"    Regular Hours: {employee_total.regular_hours:.2f}")
-        print(f"    Overtime (1.5x): {employee_total.overtime_1_5x:.2f}")
-        print(f"    Overtime (2x): {employee_total.overtime_2x:.2f}")
-        _print_overtime_breakdown(employee_total)
+
+        print(f"  Total Hours: {employee_total.total_hours:.2f}")
+        print(f"  Regular Hours: {employee_total.regular_hours:.2f}")
+        print(f"  Overtime (1.5x): {employee_total.overtime_1_5x:.2f}")
+        print(f"  Overtime (2x): {employee_total.overtime_2x:.2f}")
+        _print_overtime_breakdown(employee_total, indent="  ")
         print()
 
 

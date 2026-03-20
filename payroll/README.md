@@ -12,13 +12,9 @@ A Python script that calculates regular and overtime hours according to Californ
 
 - **Configurable Workweek**: Default Thursday-Wednesday workweek (configurable in code)
 
-- **Detailed Output**: Per-employee summaries with workweek breakdowns showing:
-  - Total hours worked
-  - Regular hours
-  - Overtime at 1.5x rate
-  - Overtime at 2x rate
-  - **Overtime breakdown**: plain-language lines for each daily, 7th-day, and weekly overtime bucket (same math as totals)
-  - Employee totals across all workweeks (including merged breakdown across workweeks)
+- **Detailed Output**: Per-employee totals across all workweeks (still computed workweek-by-workweek under the hood), plus:
+  - Total hours worked, regular hours, overtime at 1.5x and 2x
+  - **Overtime breakdown**: plain-language lines for each daily, 7th-day, and weekly overtime bucket (merged across workweeks, same math as totals)
 
 ## Requirements
 
@@ -60,30 +56,13 @@ WORKWEEK_START_DAY = 3  # 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, etc.
 
 ```
 Employee: Julian Tobias (juliancat@icloud.com)
-  Workweek: 12/11/2025 - 12/17/2025
-    Total Hours: 15.88
-    Regular Hours: 15.63
-    Overtime (1.5x): 0.25
-    Overtime (2x): 0.00
-    Overtime breakdown:
-      - Daily overtime (12/15/2025): 0.25h at 1.5x (worked 8.25h; CA daily OT after 8h).
-
-  Workweek: 12/18/2025 - 12/24/2025
-    Total Hours: 37.48
-    Regular Hours: 35.08
-    Overtime (1.5x): 2.40
-    Overtime (2x): 0.00
-    Overtime breakdown:
-      - Daily overtime (12/19/2025): 2.40h at 1.5x (worked 10.40h; CA daily OT after 8h).
-
-  EMPLOYEE TOTAL:
-    Total Hours: 53.37
-    Regular Hours: 50.72
-    Overtime (1.5x): 2.65
-    Overtime (2x): 0.00
-    Overtime breakdown:
-      - Daily overtime (12/15/2025): 0.25h at 1.5x (worked 8.25h; CA daily OT after 8h).
-      - Daily overtime (12/19/2025): 2.40h at 1.5x (worked 10.40h; CA daily OT after 8h).
+  Total Hours: 53.37
+  Regular Hours: 50.72
+  Overtime (1.5x): 2.65
+  Overtime (2x): 0.00
+  Overtime breakdown:
+    - Daily overtime (12/15/2025): 0.25h at 1.5x (worked 8.25h; CA daily OT after 8h).
+    - Daily overtime (12/19/2025): 2.40h at 1.5x (worked 10.40h; CA daily OT after 8h).
 ```
 
 ## California Overtime Rules Reference
