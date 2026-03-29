@@ -5,15 +5,15 @@
 # 2) the name of output file.
 # The script should do the following:
 
-# - rename column "product quantity" to "Quantity"
-# - rename column "product name" to "Title"
-# - rename column "product description" to "Description"
-# - rename column "sold price" to "Price"
-# - rename column "order id" to "Order ID"
-# - rename column "placed at" to "Order Time"
+# - rename column "product_quantity" to "Quantity"
+# - rename column "product_name" to "Title"
+# - rename column "product_description" to "Description"
+# - rename column "original_item_price" to "Price"
+# - rename column "order_id" to "Order ID"
+# - rename column "placed_at" to "Order Time"
 # - add column "Shipping"
 # - for each row, do the following:
-#     1.   if the cell "cancelled or failed" has any text in it, delete the row
+#     1.   if the cell "cancelled_or_failed" has any text in it, delete the row
   
 # - remove any columns other than   "sku", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"
 # - write remaining data into output file
@@ -33,21 +33,20 @@ def process_csv(input_file, output_file):
     
     # Rename columns
     rename_dict = {
-        "product quantity": "Quantity",
-        "product name": "Title",
-        "product description": "Description",
-        "sold price": "Price",
-        "order id": "Order ID",
-        "placed at": "Order Time"
+        "product_quantity": "Quantity",
+        "product_name": "Title",
+        "product_description": "Description",
+        "original_item_price": "Price",
+        "order_id": "Order ID",
+        "placed_at": "Order Time",
     }
     df.rename(columns=rename_dict, inplace=True)
     
     # Add 'Shipping' column
     df["Shipping"] = ""
     
-    # Remove rows where 'cancelled or failed' has any text
-    if "cancelled or failed" in df.columns:
-        df = df[df["cancelled or failed"].isna()]
+    # Remove rows where cancelled_or_failed has any text
+    df = df[df["cancelled_or_failed"].isna()]
     
     # Keep only required columns
     required_columns = ["sku", "Title", "Description", "Order Time", "Quantity", "Price", "Shipping", "Order ID"]
