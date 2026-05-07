@@ -96,10 +96,13 @@ python sqs_image_uploader.py --dry-run
 python sqs_image_uploader.py -d
 
 # Specify custom iCloud folder path
-python sqs_image_uploader.py --icloud-path /path/to/your/folder
+python sqs_image_uploader.py --path /path/to/your/folder
 
 # Combine options
-python sqs_image_uploader.py --dry-run --icloud-path /path/to/your/folder
+python sqs_image_uploader.py --dry-run --path /path/to/your/folder
+
+# Mark products visible after fully successful uploads
+python sqs_image_uploader.py --set-visible
 ```
 
 ### What the Script Does
@@ -127,14 +130,26 @@ Use `--dry-run` or `-d` flag to enable this mode.
 
 ### Custom iCloud Path
 
-You can specify a custom iCloud folder path using the `--icloud-path` or `-p` parameter:
+You can specify a custom iCloud folder path using the `--path` or `-p` parameter:
 
 - **Overrides config**: Command line path takes precedence over config.py setting
 - **Flexible usage**: Use different folders for different runs
 - **No config changes**: Test with different paths without modifying config.py
 - **Combines with dry-run**: Perfect for testing different folder structures
 
-Example: `python sqs_image_uploader.py --icloud-path /Users/username/Documents/test-folder`
+Example: `python sqs_image_uploader.py --path /Users/username/Documents/test-folder`
+
+### Set Visible After Successful Upload
+
+Use the `--set-visible` flag to mark a product as visible (`isVisible=true`) on the
+Squarespace store **only when every image in that SKU's folder uploads successfully**.
+
+- **Strict success guard**: If any image upload fails for a SKU, that product is NOT marked visible.
+- **Per-SKU**: Each SKU is evaluated independently.
+- **Dry-run aware**: With `--dry-run`, the script logs which products would be marked visible without writing.
+- **Reported in summary**: The end-of-run summary lists products marked visible, visibility update failures, and SKUs skipped due to partial uploads.
+
+Example: `python sqs_image_uploader.py --set-visible`
 
 ### Command Line Options
 
@@ -143,7 +158,11 @@ python sqs_image_uploader.py [OPTIONS]
 
 Options:
   --dry-run, -d          Show what would be uploaded without making changes
-  --icloud-path, -p      Path to the iCloud folder (overrides config.py setting)
+  --path, -p             Path to the iCloud folder (overrides config.py setting)
+  --force-refresh, -f    Force refresh of cached inventory without prompting
+  --log, -l FILE         Log output to specified file
+  --non-interactive      Run without interactive prompts
+  --set-visible          Mark products visible only when all images upload successfully
   --help, -h             Show this help message and exit
 ```
 

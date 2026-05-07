@@ -25,13 +25,13 @@ import logging
 # Add parent directory to path for shared library and config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from sqs_shared import SquarespaceInventoryManager, rate_limited
-from config import SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES, RETRY_DELAY
+from config import SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES
 
 # Note: Logging will be configured in main() after parsing command line args
 logger = logging.getLogger(__name__)
 
 class SquarespaceImageUploader:
-    def __init__(self, dry_run=False, icloud_path=None, cache_filename="squarespace_products_cache.json", force_refresh=False, non_interactive=False):
+    def __init__(self, dry_run=False, icloud_path=None, cache_filename="squarespace_products_cache.json", force_refresh=False, non_interactive=False, set_visible=False):
         self.api_key = SQUARESPACE_PRODUCTS_RW_KEY
         self.site_id = SQUARESPACE_SITE_ID
         self.base_url = f"https://api.squarespace.com/1.0/commerce/products"
@@ -43,6 +43,7 @@ class SquarespaceImageUploader:
         self.dry_run = dry_run
         self.icloud_path = icloud_path or ICLOUD_FOLDER_PATH
         self.force_refresh = force_refresh
+        self.set_visible = set_visible
         
         # Initialize inventory manager from shared library
         self.inventory_manager = SquarespaceInventoryManager(
@@ -58,13 +59,17 @@ class SquarespaceImageUploader:
             'products_successfully_updated': 0,
             'skus_not_found': [],
             'skus_no_photos': [],
-            'skus_other_reasons': []  # List of tuples (sku, reason)
+            'skus_other_reasons': [],  # List of tuples (sku, reason)
+            'products_marked_visible': [],
+            'products_visibility_failed': [],  # List of tuples (sku, reason)
+            'products_visibility_skipped_partial': []  # List of tuples (sku, "X/Y uploaded")
         }
         
         if dry_run:
             logger.info("🔍 DRY RUN MODE: No changes will be made to Squarespace")
         
-
+        if self.set_visible:
+            logger.info("👁️ SET-VISIBLE MODE: Products will be marked visible after fully successful uploads")
         
         logger.info(f"📁 Using iCloud folder: {self.icloud_path}")
     
@@ -103,59 +108,60 @@ class SquarespaceImageUploader:
         
         return False, ""
 
+    def _run_with_retry(self, op_name: str, attempt_fn) -> Tuple[bool, str]:
+        """
+        Execute attempt_fn() with exponential backoff retries.
+
+        attempt_fn() must return one of:
+          ("ok", None)         - success; stop and return success
+          ("fail", reason_str) - non-retryable failure (e.g., 4xx); stop and return failure
+        Or raise an exception for retryable failures (network, 5xx via raise_for_status, etc.).
+
+        Returns (ok, reason). On success, reason is "".
+        """
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                status, payload = attempt_fn()
+                if status == "ok":
+                    return True, ""
+                logger.error(f"{op_name} failed: {payload}")
+                return False, str(payload)
+            except Exception as e:
+                is_request_err = isinstance(e, requests.exceptions.RequestException)
+                label = "Request error" if is_request_err else "Unexpected error"
+                if attempt == MAX_RETRIES:
+                    reason = f"{label} after {MAX_RETRIES + 1} attempts: {e}"
+                    logger.error(f"{op_name} failed: {reason}")
+                    return False, reason
+                delay = 2 ** attempt
+                logger.warning(f"{op_name} attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
+                time.sleep(delay)
+
+        return False, "Exhausted retries"
+
     @rate_limited(REQUESTS_PER_MINUTE)
     def _upload_image_impl(self, product_id: str, image_path: Path) -> bool:
         """Upload implementation with rate limiting and retry logic"""
-        
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                # Upload the image file
-                with open(image_path, 'rb') as f:
-                    files = {'file': (image_path.name, f, 'image/jpeg')}
-                    upload_response = requests.post(
-                        f"https://api.squarespace.com/1.0/commerce/products/{product_id}/images",
-                        headers={'Authorization': f'Bearer {self.api_key}'},
-                        files=files
-                    )
-                    
-                    # Check for client errors (4xx) - don't retry these
-                    if 400 <= upload_response.status_code < 500:
-                        logger.error(f"Failed to upload {image_path.name}: Client error {upload_response.status_code} - {upload_response.text}")
-                        return False
-                    
-                    # Raise exception for other non-2xx status codes
-                    upload_response.raise_for_status()
-                
-                logger.info(f"Successfully uploaded {image_path.name} to product {product_id}")
-                return True
-                
-            except requests.exceptions.RequestException as e:
-                is_last_attempt = (attempt == MAX_RETRIES)
-                
-                if is_last_attempt:
-                    logger.error(f"Failed to upload {image_path.name} after {MAX_RETRIES + 1} attempts: {e}")
-                    return False
-                else:
-                    # Calculate exponential backoff delay: 2^attempt seconds
-                    delay = 2 ** attempt
-                    logger.warning(f"Upload attempt {attempt + 1} failed for {image_path.name}: {e}. Retrying in {delay}s...")
-                    time.sleep(delay)
-                    
-            except Exception as e:
-                is_last_attempt = (attempt == MAX_RETRIES)
-                
-                if is_last_attempt:
-                    logger.error(f"Unexpected error uploading {image_path.name} after {MAX_RETRIES + 1} attempts: {e}")
-                    return False
-                else:
-                    # Calculate exponential backoff delay: 2^attempt seconds
-                    delay = 2 ** attempt
-                    logger.warning(f"Upload attempt {attempt + 1} failed for {image_path.name}: {e}. Retrying in {delay}s...")
-                    time.sleep(delay)
-        
-        # Should never reach here, but just in case
-        return False
-    
+        op_name = f"Upload {image_path.name} to product {product_id}"
+
+        def attempt():
+            with open(image_path, 'rb') as f:
+                files = {'file': (image_path.name, f, 'image/jpeg')}
+                response = requests.post(
+                    f"https://api.squarespace.com/1.0/commerce/products/{product_id}/images",
+                    headers={'Authorization': f'Bearer {self.api_key}'},
+                    files=files
+                )
+                if 400 <= response.status_code < 500:
+                    return "fail", f"Client error {response.status_code} - {response.text}"
+                response.raise_for_status()
+            return "ok", None
+
+        ok, _ = self._run_with_retry(op_name, attempt)
+        if ok:
+            logger.info(f"Successfully uploaded {image_path.name} to product {product_id}")
+        return ok
+
     def upload_image(self, product_id: str, image_path: Path) -> bool:
         """Upload a single image to a product"""
         if self.dry_run:
@@ -163,6 +169,33 @@ class SquarespaceImageUploader:
             return True
         
         return self._upload_image_impl(product_id, image_path)
+
+    @rate_limited(REQUESTS_PER_MINUTE)
+    def _set_product_visible_impl(self, product_id: str) -> Tuple[bool, str]:
+        """Set isVisible=true for a product with retry/backoff. Returns (ok, error_reason)."""
+        op_name = f"Set isVisible=true for product {product_id}"
+        url = f"https://api.squarespace.com/1.0/commerce/products/{product_id}"
+        body = {"isVisible": True}
+
+        def attempt():
+            response = requests.put(url, headers=self.headers, json=body)
+            if 400 <= response.status_code < 500:
+                return "fail", f"Client error {response.status_code} - {response.text}"
+            response.raise_for_status()
+            return "ok", None
+
+        return self._run_with_retry(op_name, attempt)
+
+    def set_product_visible(self, product_id: str, sku: str) -> Tuple[bool, str]:
+        """Mark product as visible. Honors dry-run. Returns (ok, error_reason)."""
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would set isVisible=true for SKU {sku} (product {product_id})")
+            return True, ""
+
+        ok, reason = self._set_product_visible_impl(product_id)
+        if ok:
+            logger.info(f"👁️ Set isVisible=true for SKU {sku} (product {product_id})")
+        return ok, reason
 
     def process_date_folder(self, date_folder: Path) -> None:
         """Process all SKU folders within a date folder"""
@@ -241,6 +274,18 @@ class SquarespaceImageUploader:
             else:
                 logger.info(f"Successfully uploaded {successful_uploads}/{len(image_files)} images for SKU {sku}")
 
+            if self.set_visible:
+                if successful_uploads == len(image_files) and len(image_files) > 0:
+                    ok, reason = self.set_product_visible(product_id, sku)
+                    if ok:
+                        self.stats['products_marked_visible'].append(sku)
+                    else:
+                        self.stats['products_visibility_failed'].append((sku, reason))
+                else:
+                    partial = f"{successful_uploads}/{len(image_files)} uploaded"
+                    logger.info(f"Skipping visibility update for SKU {sku}: partial upload ({partial})")
+                    self.stats['products_visibility_skipped_partial'].append((sku, partial))
+
     def process_icloud_folder(self) -> None:
         """Process the main iCloud folder structure"""
         icloud_path = Path(self.icloud_path)
@@ -301,6 +346,23 @@ class SquarespaceImageUploader:
                 logger.info(f"   • {sku}: {reason}")
         else:
             logger.info("✅ No SKUs were skipped for other reasons")
+
+        # Visibility outcomes (only meaningful when --set-visible is enabled)
+        if self.set_visible:
+            logger.info("")
+            logger.info(f"👁️ Products marked visible: {len(self.stats['products_marked_visible'])}")
+            for sku in self.stats['products_marked_visible']:
+                logger.info(f"   • {sku}")
+
+            if self.stats['products_visibility_failed']:
+                logger.info(f"❌ Visibility update failed ({len(self.stats['products_visibility_failed'])}):")
+                for sku, reason in self.stats['products_visibility_failed']:
+                    logger.info(f"   • {sku}: {reason}")
+
+            if self.stats['products_visibility_skipped_partial']:
+                logger.info(f"⏭️ Visibility skipped due to partial upload ({len(self.stats['products_visibility_skipped_partial'])}):")
+                for sku, partial in self.stats['products_visibility_skipped_partial']:
+                    logger.info(f"   • {sku}: {partial}")
         
         # Total counts
         total_processed = len(self.stats['skus_not_found']) + len(self.stats['skus_no_photos']) + len(self.stats['skus_other_reasons']) + self.stats['products_successfully_updated']
@@ -323,6 +385,7 @@ Examples:
   %(prog)s --force-refresh  -f                # Force download fresh inventory without prompting
   %(prog)s --path -p /path/to/folder          # Specify custom folder path
   %(prog)s --log -l mylog.log                 # Log output to custom file
+  %(prog)s --set-visible                      # Mark products visible after fully successful uploads
         """
     )
     parser.add_argument(
@@ -350,6 +413,11 @@ Examples:
         '--non-interactive',
         action='store_true',
         help='Run in non-interactive mode (no prompts for cache refresh)'
+    )
+    parser.add_argument(
+        '--set-visible',
+        action='store_true',
+        help='Mark each product as visible (isVisible=true) only when ALL its images upload successfully'
     )
     
     args = parser.parse_args()
@@ -388,7 +456,13 @@ Examples:
         sys.exit(1)
     
     # Create uploader instance
-    uploader = SquarespaceImageUploader(dry_run=args.dry_run, icloud_path=icloud_path, force_refresh=args.force_refresh, non_interactive=args.non_interactive)
+    uploader = SquarespaceImageUploader(
+        dry_run=args.dry_run,
+        icloud_path=icloud_path,
+        force_refresh=args.force_refresh,
+        non_interactive=args.non_interactive,
+        set_visible=args.set_visible,
+    )
     
     # Process the upload
     uploader.process_icloud_folder()
