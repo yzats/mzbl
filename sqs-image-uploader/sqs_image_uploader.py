@@ -14,6 +14,7 @@ Requirements:
 import os
 import sys
 import json
+import uuid
 import requests
 import argparse
 import time
@@ -172,13 +173,22 @@ class SquarespaceImageUploader:
 
     @rate_limited(REQUESTS_PER_MINUTE)
     def _set_product_visible_impl(self, product_id: str) -> Tuple[bool, str]:
-        """Set isVisible=true for a product with retry/backoff. Returns (ok, error_reason)."""
+        """Set isVisible=true via the v2 Products partial-update endpoint.
+
+        Squarespace v2 'Update product' uses POST to /v2/commerce/products/{id}
+        with a {present, value} envelope per updatable field.
+        Returns (ok, error_reason).
+        """
         op_name = f"Set isVisible=true for product {product_id}"
-        url = f"https://api.squarespace.com/1.0/commerce/products/{product_id}"
-        body = {"isVisible": True}
+        url = f"https://api.squarespace.com/v2/commerce/products/{product_id}"
+        body = {"isVisible": {"present": True, "value": True}}
 
         def attempt():
-            response = requests.put(url, headers=self.headers, json=body)
+            headers = self.headers.copy()
+            headers['Idempotency-Key'] = str(uuid.uuid4())
+            response = requests.post(url, headers=headers, json=body)
+            if response.status_code in (200, 204):
+                return "ok", None
             if 400 <= response.status_code < 500:
                 return "fail", f"Client error {response.status_code} - {response.text}"
             response.raise_for_status()
