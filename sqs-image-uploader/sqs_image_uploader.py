@@ -175,13 +175,16 @@ class SquarespaceImageUploader:
     def _set_product_visible_impl(self, product_id: str) -> Tuple[bool, str]:
         """Set isVisible=true via the v2 Products partial-update endpoint.
 
-        Squarespace v2 'Update product' uses POST to /v2/commerce/products/{id}
-        with a {present, value} envelope per updatable field.
+        Squarespace v2 'Update product' is POST /v2/commerce/products/{id}.
+        Note: the OpenAPI spec documents `isVisible` as a {present, value}
+        envelope (ChangeBoolean), but the deployed runtime rejects that with
+        a 400 type-mismatch and only accepts a flat boolean - matching the
+        shape used by Create product and the response model.
         Returns (ok, error_reason).
         """
         op_name = f"Set isVisible=true for product {product_id}"
         url = f"https://api.squarespace.com/v2/commerce/products/{product_id}"
-        body = {"isVisible": {"present": True, "value": True}}
+        body = {"isVisible": True}
 
         def attempt():
             headers = self.headers.copy()
