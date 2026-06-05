@@ -356,11 +356,11 @@ class SquarespaceInventoryManager:
             
             # Log case normalization if it occurred
             if sku != sku_key:
-                logger.info(f"🔤 Normalizing SKU case: '{sku}' → '{sku_key}'")
+                logger.debug(f"Normalizing SKU case: '{sku}' -> '{sku_key}'")
             
             # Fast lookup using uppercase key
             matching_products = self._sku_lookup.get(sku_key, [])
-            logger.info(f"📊 Found {len(matching_products)} products with SKU '{sku}' ")
+            logger.debug(f"Found {len(matching_products)} products with SKU '{sku}'")
             
             if len(matching_products) > 1:
                 logger.warning(f"⚠️ Multiple products found with SKU {sku}:")
@@ -371,11 +371,10 @@ class SquarespaceInventoryManager:
                 product = matching_products[0]
                 return product
             else:
-                logger.warning(f"❌ No products found with SKU: {sku}")
+                logger.debug(f"No products found with SKU: {sku}")
                 return None
                 
         except Exception as e:
             logger.error(f"Error searching for SKU {sku}: {e}")
             return None
-
 

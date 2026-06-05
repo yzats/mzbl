@@ -14,17 +14,41 @@ Requirements:
 import os
 import sys
 import csv
-import requests
 import argparse
 import uuid
 import logging
+import warnings
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from pathlib import Path
 
 # Add parent directory to path for shared library and config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    from config import SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY, SQUARESPACE_SITE_ID, REQUESTS_PER_MINUTE
+except ModuleNotFoundError as e:
+    if e.name != "config":
+        raise
+    print("Missing configuration file: config.py", file=sys.stderr)
+    print(f"Create {REPO_ROOT / 'config.py'} with your Squarespace settings.", file=sys.stderr)
+    print(f"You can start from: {REPO_ROOT / 'config.example.py'}", file=sys.stderr)
+    print("Required values: SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY, SQUARESPACE_SITE_ID, REQUESTS_PER_MINUTE", file=sys.stderr)
+    sys.exit(1)
+except ImportError as e:
+    print("config.py was found, but it is missing one or more required settings.", file=sys.stderr)
+    print(f"Details: {e}", file=sys.stderr)
+    print("Required values: SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY, SQUARESPACE_SITE_ID, REQUESTS_PER_MINUTE", file=sys.stderr)
+    sys.exit(1)
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"urllib3 v2 only supports OpenSSL 1\.1\.1\+",
+)
+import requests
 from sqs_shared import SquarespaceInventoryManager, rate_limited
-from config import SQUARESPACE_PRODUCTS_INVENTORY_RW_KEY, SQUARESPACE_SITE_ID, REQUESTS_PER_MINUTE
 
 # Note: Logging will be configured in main() after parsing command line args
 logger = logging.getLogger(__name__)
@@ -538,4 +562,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-

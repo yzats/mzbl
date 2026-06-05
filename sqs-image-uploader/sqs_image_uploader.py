@@ -15,9 +15,9 @@ import os
 import sys
 import json
 import uuid
-import requests
 import argparse
 import time
+import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
@@ -25,8 +25,31 @@ import logging
 
 # Add parent directory to path for shared library and config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    from config import SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES
+except ModuleNotFoundError as e:
+    if e.name != "config":
+        raise
+    print("Missing configuration file: config.py", file=sys.stderr)
+    print(f"Create {REPO_ROOT / 'config.py'} with your Squarespace settings.", file=sys.stderr)
+    print(f"You can start from: {REPO_ROOT / 'config.example.py'}", file=sys.stderr)
+    print("Required values: SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES", file=sys.stderr)
+    sys.exit(1)
+except ImportError as e:
+    print("config.py was found, but it is missing one or more required settings.", file=sys.stderr)
+    print(f"Details: {e}", file=sys.stderr)
+    print("Required values: SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES", file=sys.stderr)
+    sys.exit(1)
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"urllib3 v2 only supports OpenSSL 1\.1\.1\+",
+)
+import requests
 from sqs_shared import SquarespaceInventoryManager, rate_limited
-from config import SQUARESPACE_PRODUCTS_RW_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH, MAX_IMAGES_PER_SKU_FOLDER, REQUESTS_PER_MINUTE, MAX_RETRIES
 
 # Note: Logging will be configured in main() after parsing command line args
 logger = logging.getLogger(__name__)
@@ -86,15 +109,11 @@ class SquarespaceImageUploader:
             if variants:
                 sku = variants[0].get('sku', 'Unknown')
         
-        # Get product name from the correct field
-        product_name = product.get('name', product.get('title', 'Unknown'))
-        
-        
         # Check if product has images at product level
         product_images = product.get('images', [])
 
         if product_images:
-            logger.info(f"   ⚠️ Product has {len(product_images)} existing images")
+            logger.debug(f"Product {sku} has {len(product_images)} existing images")
             return True, f"Product {sku} already has images"
         
 
@@ -104,7 +123,7 @@ class SquarespaceImageUploader:
         store_page_id = product.get('storePageId')
         
         if store_page_id and is_visible:
-            logger.info(f"   ⚠️ Product is visible on store")
+            logger.debug(f"Product {sku} is visible on store")
             return True, f"Product {sku} is set to visible"
         
         return False, ""
@@ -160,13 +179,13 @@ class SquarespaceImageUploader:
 
         ok, _ = self._run_with_retry(op_name, attempt)
         if ok:
-            logger.info(f"Successfully uploaded {image_path.name} to product {product_id}")
+            logger.debug(f"Uploaded {image_path.name} to product {product_id}")
         return ok
 
     def upload_image(self, product_id: str, image_path: Path) -> bool:
         """Upload a single image to a product"""
         if self.dry_run:
-            logger.info(f"[DRY RUN] Would upload {image_path.name} to product {product_id}")
+            logger.debug(f"[DRY RUN] Would upload {image_path.name} to product {product_id}")
             return True
         
         return self._upload_image_impl(product_id, image_path)
@@ -202,12 +221,12 @@ class SquarespaceImageUploader:
     def set_product_visible(self, product_id: str, sku: str) -> Tuple[bool, str]:
         """Mark product as visible. Honors dry-run. Returns (ok, error_reason)."""
         if self.dry_run:
-            logger.info(f"[DRY RUN] Would set isVisible=true for SKU {sku} (product {product_id})")
+            logger.debug(f"[DRY RUN] Would set isVisible=true for SKU {sku} (product {product_id})")
             return True, ""
 
         ok, reason = self._set_product_visible_impl(product_id)
         if ok:
-            logger.info(f"👁️ Set isVisible=true for SKU {sku} (product {product_id})")
+            logger.debug(f"Set isVisible=true for SKU {sku} (product {product_id})")
         return ok, reason
 
     def process_date_folder(self, date_folder: Path) -> None:
@@ -223,7 +242,7 @@ class SquarespaceImageUploader:
         
         for sku_folder in sku_folders:
             sku = sku_folder.name
-            logger.info(f"Processing SKU: {sku}")
+            logger.debug(f"Processing SKU: {sku}")
             
             # Get all image files in the SKU folder first
             image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
@@ -235,12 +254,12 @@ class SquarespaceImageUploader:
             # Check if SKU folder has more than the maximum allowed images
             if MAX_IMAGES_PER_SKU_FOLDER > 0 and len(image_files) > MAX_IMAGES_PER_SKU_FOLDER:
                 reason = f"SKU folder contains {len(image_files)} images (maximum allowed: {MAX_IMAGES_PER_SKU_FOLDER})"
-                logger.info(f"Skipping {sku}: {reason}")
+                logger.info(f"{sku}: skipped, {reason}")
                 self.stats['skus_other_reasons'].append((sku, reason))
                 continue
             
             if not image_files:
-                logger.warning(f"No image files found in {sku_folder}")
+                logger.warning(f"{sku}: skipped, no image files found")
                 self.stats['skus_no_photos'].append(sku)
                 continue
             
@@ -260,14 +279,14 @@ class SquarespaceImageUploader:
             # Get product from Squarespace
             product = self.inventory_manager.get_product_by_sku(sku)
             if not product:
-                logger.warning(f"Product with SKU {sku} not found on Squarespace")
+                logger.warning(f"{sku}: skipped, SKU not found on Squarespace")
                 self.stats['skus_not_found'].append(sku)
                 continue
             
             # Check if we should skip this product
             should_skip, reason = self.should_skip_product(product)
             if should_skip:
-                logger.info(f"Skipping {sku}: {reason}")
+                logger.info(f"{sku}: skipped, {reason}")
                 self.stats['skus_other_reasons'].append((sku, reason))
                 continue
             
@@ -282,22 +301,28 @@ class SquarespaceImageUploader:
             if successful_uploads > 0:
                 self.stats['products_successfully_updated'] += 1
             
-            if self.dry_run:
-                logger.info(f"[DRY RUN] Would upload {successful_uploads}/{len(image_files)} images for SKU {sku}")
-            else:
-                logger.info(f"Successfully uploaded {successful_uploads}/{len(image_files)} images for SKU {sku}")
-
+            action = "would upload" if self.dry_run else "uploaded"
+            result_parts = [f"{sku}: {action} {successful_uploads}/{len(image_files)} image(s)"]
+            
             if self.set_visible:
                 if successful_uploads == len(image_files) and len(image_files) > 0:
                     ok, reason = self.set_product_visible(product_id, sku)
                     if ok:
                         self.stats['products_marked_visible'].append(sku)
+                        result_parts.append("would mark visible" if self.dry_run else "marked visible")
                     else:
                         self.stats['products_visibility_failed'].append((sku, reason))
+                        result_parts.append(f"visibility failed: {reason}")
                 else:
                     partial = f"{successful_uploads}/{len(image_files)} uploaded"
-                    logger.info(f"Skipping visibility update for SKU {sku}: partial upload ({partial})")
+                    result_parts.append(f"visibility skipped: partial upload ({partial})")
                     self.stats['products_visibility_skipped_partial'].append((sku, partial))
+            
+            log_message = ", ".join(result_parts)
+            if successful_uploads == len(image_files):
+                logger.info(log_message)
+            else:
+                logger.warning(log_message)
 
     def process_icloud_folder(self) -> None:
         """Process the main iCloud folder structure"""
@@ -399,6 +424,7 @@ Examples:
   %(prog)s --path -p /path/to/folder          # Specify custom folder path
   %(prog)s --log -l mylog.log                 # Log output to custom file
   %(prog)s --set-visible                      # Mark products visible after fully successful uploads
+  %(prog)s --verbose                          # Show per-image and SKU lookup details
         """
     )
     parser.add_argument(
@@ -432,13 +458,19 @@ Examples:
         action='store_true',
         help='Mark each product as visible (isVisible=true) only when ALL its images upload successfully'
     )
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Show detailed per-image upload and SKU lookup logging'
+    )
     
     args = parser.parse_args()
     
     # Configure logging based on command line arguments
     log_file = args.log if args.log else 'squarespace_upload.log'
+    log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format='%(message)s',
         handlers=[
             logging.FileHandler(log_file),

@@ -6,15 +6,24 @@ Run this script to test your setup before running the main upload script.
 """
 
 import sys
-import requests
+import warnings
 from pathlib import Path
 
 try:
     from config import SQUARESPACE_API_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH
 except ImportError:
-    print("❌ Error: config.py not found or not properly configured")
-    print("Please create config.py with your API credentials")
+    repo_root = Path(__file__).resolve().parents[1]
+    print("Missing or incomplete configuration file: config.py")
+    print(f"Create {repo_root / 'config.py'} with your Squarespace settings.")
+    print(f"You can start from: {repo_root / 'config.example.py'}")
+    print("Required values for this test: SQUARESPACE_API_KEY, SQUARESPACE_SITE_ID, ICLOUD_FOLDER_PATH")
     sys.exit(1)
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"urllib3 v2 only supports OpenSSL 1\.1\.1\+",
+)
+import requests
 
 def test_config():
     """Test configuration values"""

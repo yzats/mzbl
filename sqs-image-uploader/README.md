@@ -103,6 +103,9 @@ python sqs_image_uploader.py --dry-run --path /path/to/your/folder
 
 # Mark products visible after fully successful uploads
 python sqs_image_uploader.py --set-visible
+
+# Show per-image upload and SKU lookup details
+python sqs_image_uploader.py --verbose
 ```
 
 ### What the Script Does
@@ -151,6 +154,17 @@ Squarespace store **only when every image in that SKU's folder uploads successfu
 
 Example: `python sqs_image_uploader.py --set-visible`
 
+### Verbose Logging
+
+By default, each SKU prints one concise status line, such as:
+
+```text
+A91448: uploaded 4/4 image(s), marked visible
+```
+
+Use `--verbose` or `-v` when you need lower-level details like each image filename,
+product IDs, and SKU lookup counts.
+
 ### Command Line Options
 
 ```bash
@@ -163,6 +177,7 @@ Options:
   --log, -l FILE         Log output to specified file
   --non-interactive      Run without interactive prompts
   --set-visible          Mark products visible only when all images upload successfully
+  --verbose, -v          Show per-image upload and SKU lookup details
   --help, -h             Show this help message and exit
 ```
 
@@ -195,13 +210,14 @@ The script includes comprehensive error handling:
 
 ## Logging
 
-The script creates detailed logs in two places:
+The script creates logs in two places:
 
 1. **Console output**: Real-time progress and important messages
-2. **Log file**: Detailed information saved to `squarespace_upload.log`
+2. **Log file**: The same run output saved to `squarespace_upload.log`
 
 Log levels:
-- `INFO`: Normal operation messages
+- `INFO`: Concise progress and normal operation messages
+- `DEBUG`: Detailed per-image and SKU lookup messages, enabled with `--verbose`
 - `WARNING`: Non-critical issues (missing files, invalid folders)
 - `ERROR`: Critical issues (API failures, missing products)
 
