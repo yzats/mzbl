@@ -33,6 +33,7 @@ test-icloud/
 
 # Virtual environments
 venv/
+myenv/
 env/
 ENV/
 env.bak/
