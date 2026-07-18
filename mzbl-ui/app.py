@@ -7,6 +7,7 @@ Local web interface for managing MZBL Squarespace scripts
 import os
 import sys
 import json
+import shlex
 import subprocess
 import threading
 import time
@@ -143,6 +144,28 @@ class ProcessManager:
 # Global process manager
 process_manager = ProcessManager()
 
+def normalize_user_path(path):
+    """Accept paths pasted from either Finder or a shell prompt."""
+    if not isinstance(path, str):
+        return path
+
+    path = path.strip()
+    if not path:
+        return path
+
+    # Browser inputs pass backslashes literally. If someone pastes a
+    # shell-escaped path like "Mobile\ Documents/SQS\ Upload", convert it
+    # to the real filesystem path before saving or launching subprocesses.
+    if '\\' in path or '"' in path or "'" in path:
+        try:
+            parts = shlex.split(path)
+            if len(parts) == 1:
+                return parts[0]
+        except ValueError:
+            pass
+
+    return path
+
 def load_settings():
     """Load settings from JSON file"""
     try:
@@ -169,6 +192,14 @@ def load_settings():
 def save_settings(settings):
     """Save settings to JSON file"""
     try:
+        image_uploader = settings.get('image_uploader')
+        if isinstance(image_uploader, dict):
+            image_uploader['icloud_path'] = normalize_user_path(image_uploader.get('icloud_path', ''))
+
+        stock_remover = settings.get('stock_remover')
+        if isinstance(stock_remover, dict):
+            stock_remover['csv_file'] = normalize_user_path(stock_remover.get('csv_file', ''))
+
         with open(SETTINGS_FILE, 'w') as f:
             json.dump(settings, f, indent=2)
         return True
@@ -416,7 +447,7 @@ def upload_images():
             command.extend(['--force-refresh'])
         
         if data.get('icloud_path'):
-            command.extend(['--path', data['icloud_path']])
+            command.extend(['--path', normalize_user_path(data['icloud_path'])])
         
         # Always run in non-interactive mode when invoked from UI
         command.extend(['--non-interactive'])

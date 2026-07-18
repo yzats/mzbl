@@ -10,7 +10,7 @@ echo "🚀 Starting MZBL Management UI..."
 
 # Activate virtual environment
 echo "🔧 Activating virtual environment..."
-source ~/devl/venv/bin/activate
+source ~/devl/mzbl/myenv/bin/activate
 
 
 # Start the Flask application
