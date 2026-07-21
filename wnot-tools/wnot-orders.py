@@ -23,10 +23,23 @@
 # uv run --with pandas wnot-orders.py <in.csv> <out.csv>
 
 
-import pandas as pd
+import argparse
 import sys
 
 def process_csv(input_file, output_file):
+    try:
+        import pandas as pd
+    except ModuleNotFoundError as exc:
+        if exc.name != "pandas":
+            raise
+        print(
+            "Missing dependency: pandas\n"
+            "Run this script with uv so it uses the project environment:\n"
+            "  uv run --with pandas wnot-tools/wnot-orders.py <input_file> <output_file>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Load the CSV file
     df = pd.read_csv(input_file)
     
@@ -55,11 +68,11 @@ def process_csv(input_file, output_file):
     df.to_csv(output_file, index=False)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python script.py <input_file> <output_file>")
-        sys.exit(1)
-    
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
-    
-    process_csv(input_file, output_file)
+    parser = argparse.ArgumentParser(
+        description="Convert a Whatnot orders CSV into the MZBL import format."
+    )
+    parser.add_argument("input_file", help="Path to the input CSV file")
+    parser.add_argument("output_file", help="Path for the converted output CSV file")
+    args = parser.parse_args()
+
+    process_csv(args.input_file, args.output_file)
