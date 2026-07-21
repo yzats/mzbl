@@ -1,5 +1,5 @@
 # Configuration files with sensitive data
-config.py
+sqs-tools/config.py
 
 # Log files
 *.log
@@ -60,4 +60,4 @@ Thumbs.db
 *.temp 
 *.csv
 mzbl-ui/settings.json
-sqs-stock-remover/squarespace_products_cache.json
+sqs-tools/sqs-stock-remover/squarespace_products_cache.json
