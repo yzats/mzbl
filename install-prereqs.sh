@@ -31,9 +31,9 @@ echo "Using venv: $VENV_DIR"
 "$PYTHON" -m pip install --upgrade pip setuptools wheel
 
 "$PYTHON" -m pip install --upgrade \
-  -r "$ROOT_DIR/sqs_shared/requirements.txt" \
-  -r "$ROOT_DIR/sqs-stock-remover/requirements.txt" \
-  -r "$ROOT_DIR/sqs-image-uploader/requirements.txt" \
+  -r "$ROOT_DIR/sqs-tools/sqs_shared/requirements.txt" \
+  -r "$ROOT_DIR/sqs-tools/sqs-stock-remover/requirements.txt" \
+  -r "$ROOT_DIR/sqs-tools/sqs-image-uploader/requirements.txt" \
   pandas \
   Flask
 
