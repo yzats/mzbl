@@ -38,16 +38,11 @@ iCloud_folder/
 ### 1. Install Python Dependencies
 
 ```bash
-# Create a virtual environment
-python3 -m venv venv
+# Create a uv-managed environment
+uv venv
 
-# Activate the virtual environment
-source venv/bin/activate  # On macOS/Linux
-# or
-venv\Scripts\activate     # On Windows
-
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies into .venv
+uv pip install -r requirements.txt
 ```
 
 ### 2. Configure API Keys
@@ -83,29 +78,26 @@ Your Squarespace Site ID can be found in your site's URL or in the Developer Por
 ### Basic Usage
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
 # Run the script (normal mode)
-python sqs_image_uploader.py
+uv run sqs_image_uploader.py
 
 # Run in dry-run mode (see what would be uploaded without making changes)
-python sqs_image_uploader.py --dry-run
+uv run sqs_image_uploader.py --dry-run
 
 # Short form for dry run
-python sqs_image_uploader.py -d
+uv run sqs_image_uploader.py -d
 
 # Specify custom iCloud folder path
-python sqs_image_uploader.py --path /path/to/your/folder
+uv run sqs_image_uploader.py --path /path/to/your/folder
 
 # Combine options
-python sqs_image_uploader.py --dry-run --path /path/to/your/folder
+uv run sqs_image_uploader.py --dry-run --path /path/to/your/folder
 
 # Mark products visible after fully successful uploads
-python sqs_image_uploader.py --set-visible
+uv run sqs_image_uploader.py --set-visible
 
 # Show per-image upload and SKU lookup details
-python sqs_image_uploader.py --verbose
+uv run sqs_image_uploader.py --verbose
 ```
 
 ### What the Script Does

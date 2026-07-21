@@ -2,20 +2,27 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UV_BIN="${UV_BIN:-uv}"
+
+if ! command -v "$UV_BIN" >/dev/null 2>&1; then
+  echo "uv is required. Install it with Homebrew: brew install uv" >&2
+  exit 1
+fi
 
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
   VENV_DIR="$VIRTUAL_ENV"
 elif [[ -n "${VENV_DIR:-}" ]]; then
   VENV_DIR="$(cd "$VENV_DIR" && pwd)"
-elif [[ -d "$ROOT_DIR/myenv" ]]; then
-  VENV_DIR="$ROOT_DIR/myenv"
-elif [[ -d "$ROOT_DIR/.venv" ]]; then
-  VENV_DIR="$ROOT_DIR/.venv"
-elif [[ -d "$ROOT_DIR/venv" ]]; then
-  VENV_DIR="$ROOT_DIR/venv"
 else
   VENV_DIR="$ROOT_DIR/.venv"
-  "${PYTHON_BIN:-python3}" -m venv "$VENV_DIR"
+fi
+
+if [[ ! -d "$VENV_DIR" ]]; then
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    "$UV_BIN" venv --python "$PYTHON_BIN" "$VENV_DIR"
+  else
+    "$UV_BIN" venv "$VENV_DIR"
+  fi
 fi
 
 if [[ -x "$VENV_DIR/bin/python" ]]; then
@@ -23,14 +30,13 @@ if [[ -x "$VENV_DIR/bin/python" ]]; then
 elif [[ -x "$VENV_DIR/Scripts/python.exe" ]]; then
   PYTHON="$VENV_DIR/Scripts/python.exe"
 else
-  echo "Could not find a Python executable in venv: $VENV_DIR" >&2
+  echo "Could not find a Python executable in uv environment: $VENV_DIR" >&2
   exit 1
 fi
 
-echo "Using venv: $VENV_DIR"
-"$PYTHON" -m pip install --upgrade pip setuptools wheel
+echo "Using uv environment: $VENV_DIR"
 
-"$PYTHON" -m pip install --upgrade \
+"$UV_BIN" pip install --python "$PYTHON" --upgrade \
   -r "$ROOT_DIR/sqs-tools/sqs_shared/requirements.txt" \
   -r "$ROOT_DIR/sqs-tools/sqs-stock-remover/requirements.txt" \
   -r "$ROOT_DIR/sqs-tools/sqs-image-uploader/requirements.txt" \

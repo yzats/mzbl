@@ -12,7 +12,7 @@ A reusable Python library for interacting with the Squarespace API, providing in
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ## Usage
@@ -110,5 +110,4 @@ The library will log when case normalization occurs and warn about potential con
 ## License
 
 Internal use only.
-
 

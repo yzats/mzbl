@@ -20,8 +20,7 @@
 #
 # ----------------------
 # To execute:
-# source ~/devl/venv/bin/activate" <-- do this once
-# python wnot-orders.py <in.csv> <out.csv>
+# uv run --with pandas wnot-orders.py <in.csv> <out.csv>
 
 
 import pandas as pd
@@ -64,4 +63,3 @@ if __name__ == "__main__":
     output_file = sys.argv[2]
     
     process_csv(input_file, output_file)
-

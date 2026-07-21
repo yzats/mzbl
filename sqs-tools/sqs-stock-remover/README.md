@@ -23,7 +23,7 @@ A Python script to set stock levels to 0 for products listed in a CSV file on Sq
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # Make sure config.py exists in parent directory with your API credentials
 ```
@@ -242,4 +242,3 @@ All errors are logged with details for troubleshooting.
 ## License
 
 Internal use only.
-

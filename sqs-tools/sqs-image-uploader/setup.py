@@ -8,6 +8,7 @@ This script helps set up the environment and dependencies.
 import os
 import sys
 import subprocess
+import shutil
 from pathlib import Path
 
 def run_command(command, description):
@@ -32,23 +33,30 @@ def check_python_version():
     print(f"✅ Python {version.major}.{version.minor}.{version.micro} is compatible")
     return True
 
+def check_uv():
+    """Check if uv is installed"""
+    print("🔎 Checking uv...")
+    if shutil.which("uv") is None:
+        print("❌ uv is required. Install it with Homebrew: brew install uv")
+        return False
+    return run_command("uv --version", "Checking uv version")
+
 def create_virtual_environment():
-    """Create a virtual environment"""
-    if Path("venv").exists():
-        print("✅ Virtual environment already exists")
+    """Create a uv-managed virtual environment"""
+    if Path(".venv").exists():
+        print("✅ uv environment already exists")
         return True
-    
-    return run_command("python3 -m venv venv", "Creating virtual environment")
+
+    return run_command("uv venv", "Creating uv environment")
 
 def install_dependencies():
     """Install Python dependencies"""
-    # Determine the correct pip command based on OS
     if os.name == 'nt':  # Windows
-        pip_cmd = "venv\\Scripts\\pip"
+        python_cmd = ".venv\\Scripts\\python.exe"
     else:  # macOS/Linux
-        pip_cmd = "venv/bin/pip"
-    
-    return run_command(f"{pip_cmd} install -r requirements.txt", "Installing dependencies")
+        python_cmd = ".venv/bin/python"
+
+    return run_command(f"uv pip install --python {python_cmd} -r requirements.txt", "Installing dependencies")
 
 def create_config_template():
     """Create a config template if it doesn't exist"""
@@ -106,6 +114,9 @@ def main():
     # Check Python version
     if not check_python_version():
         sys.exit(1)
+
+    if not check_uv():
+        sys.exit(1)
     
     print()
     
@@ -138,4 +149,4 @@ def main():
     print("For detailed instructions, see README.md")
 
 if __name__ == "__main__":
-    main() 
+    main()
