@@ -176,6 +176,77 @@ class SplitEntryByWorkday(unittest.TestCase):
         self.assertEqual(d2, d1 + timedelta(days=1))
 
 
+class ClockifyReportGrouping(unittest.TestCase):
+    def test_cross_midnight_entry_stays_on_start_date_for_payroll_summary(self) -> None:
+        earlier = pay_calc.TimeEntry(
+            "u",
+            "e",
+            "07/21/2026",
+            "9:00 AM",
+            "07/21/2026",
+            "10:00 AM",
+            "1:00",
+        )
+        entry = pay_calc.TimeEntry(
+            "u",
+            "e",
+            "07/22/2026",
+            "3:37 PM",
+            "07/23/2026",
+            "12:27 AM",
+            "8:50",
+        )
+        grouped = pay_calc.group_by_employee_and_workweek([earlier, entry])
+        employee_weeks = grouped["u|e"]
+        workweek_start = pay_calc.get_workweek_key(
+            datetime.combine(date(2026, 7, 22), time(0, 1))
+        )
+
+        self.assertEqual(set(employee_weeks.keys()), {workweek_start})
+        self.assertIn(date(2026, 7, 22), employee_weeks[workweek_start])
+        self.assertNotIn(
+            date(2026, 7, 23),
+            {d for daily in employee_weeks.values() for d in daily},
+        )
+        self.assertAlmostEqual(
+            employee_weeks[workweek_start][date(2026, 7, 22)],
+            8 + 50 / 60,
+            places=5,
+        )
+
+    def test_internal_cross_midnight_entry_also_stays_on_start_date(self) -> None:
+        internal = pay_calc.TimeEntry(
+            "u",
+            "e",
+            "07/16/2026",
+            "11:52 PM",
+            "07/17/2026",
+            "04:10 AM",
+            "4:18",
+        )
+        later = pay_calc.TimeEntry(
+            "u",
+            "e",
+            "07/22/2026",
+            "9:00 AM",
+            "07/22/2026",
+            "10:00 AM",
+            "1:00",
+        )
+        grouped = pay_calc.group_by_employee_and_workweek([internal, later])
+        employee_weeks = grouped["u|e"]
+        workweek_start = pay_calc.get_workweek_key(
+            datetime.combine(date(2026, 7, 16), time(0, 1))
+        )
+
+        self.assertAlmostEqual(
+            employee_weeks[workweek_start][date(2026, 7, 16)],
+            4.3,
+            places=5,
+        )
+        self.assertNotIn(date(2026, 7, 17), employee_weeks[workweek_start])
+
+
 class TimeEntryDurationFallback(unittest.TestCase):
     def test_uses_duration_when_end_not_after_start(self) -> None:
         entry = pay_calc.TimeEntry(
@@ -204,6 +275,18 @@ class OvertimeSummaryAdd(unittest.TestCase):
         b.overtime_2x = 0
         a.add(b)
         _assert_hours(self, a, total=15, regular=13, ot_15=2, ot_2=0)
+
+
+class RegularHoursCap(unittest.TestCase):
+    def test_converts_regular_hours_above_cap_to_time_and_half(self) -> None:
+        s = pay_calc.OvertimeSummary()
+        s.total_hours = 90
+        s.regular_hours = 83
+        s.overtime_1_5x = 7
+
+        pay_calc.apply_regular_hours_cap(s, cap=80)
+
+        _assert_hours(self, s, total=90, regular=80, ot_15=10, ot_2=0)
 
 
 if __name__ == "__main__":

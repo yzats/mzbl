@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 # Configuration
 WORKWEEK_START_DAY = 3  # 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, etc.
+REGULAR_HOURS_CAP = 80.0
 
 
 class TimeEntry:
@@ -130,8 +131,12 @@ def get_workweek_key(date: datetime, start_day: int = WORKWEEK_START_DAY) -> dat
 
 def group_by_employee_and_workweek(entries: List[TimeEntry]) -> Dict[str, Dict[datetime, Dict[datetime.date, float]]]:
     """
-    Organize entries by employee and workweek, split by workday.
+    Organize entries by employee and workweek using Clockify report-day attribution.
     Returns: {employee_key: {workweek_start: {date: total_hours}}}
+
+    Clockify detailed reports include entries based on the entry start date. For payroll
+    summaries, keep every cross-midnight entry on its start date so the overtime rules
+    are applied to the same day Clockify attributes the shift to.
     """
     grouped = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
 
@@ -140,7 +145,7 @@ def group_by_employee_and_workweek(entries: List[TimeEntry]) -> Dict[str, Dict[d
         if not entry.start_dt:
             continue
 
-        segments = _split_entry_by_workday(entry)
+        segments = _entry_segments_for_clockify_report(entry)
         if not segments:
             segments = [(entry.start_dt.date(), entry.duration_hours)]
 
@@ -150,6 +155,15 @@ def group_by_employee_and_workweek(entries: List[TimeEntry]) -> Dict[str, Dict[d
             grouped[employee_key][workweek_start][workday_date] += hours
 
     return grouped
+
+
+def _entry_segments_for_clockify_report(entry: TimeEntry) -> List[Tuple[datetime.date, float]]:
+    """Return payroll-report day buckets, keeping cross-midnight entries on start date."""
+    if not entry.start_dt:
+        return []
+    if entry.end_dt and entry.end_dt.date() != entry.start_dt.date():
+        return [(entry.start_dt.date(), entry.duration_hours)]
+    return _split_entry_by_workday(entry)
 
 
 def _workday_start_for(dt: datetime) -> datetime:
@@ -388,12 +402,31 @@ def print_summary(grouped_data: Dict[str, Dict[datetime, Dict[datetime.date, flo
             summary = calculate_overtime_for_workweek(daily_hours, workweek_start)
             employee_total.add(summary)
 
+        apply_regular_hours_cap(employee_total)
+
         print(f"  Total Hours: {employee_total.total_hours:.2f}")
         print(f"  Regular Hours: {employee_total.regular_hours:.2f}")
         print(f"  Overtime (1.5x): {employee_total.overtime_1_5x:.2f}")
         print(f"  Overtime (2x): {employee_total.overtime_2x:.2f}")
         _print_overtime_breakdown(employee_total, indent="  ")
         print()
+
+
+def apply_regular_hours_cap(summary: OvertimeSummary,
+                            cap: float = REGULAR_HOURS_CAP) -> None:
+    """Cap regular hours for the report and convert the remainder to 1.5x overtime."""
+    if summary.regular_hours <= cap:
+        return
+    hours_to_convert = summary.regular_hours - cap
+    summary.regular_hours = cap
+    summary.overtime_1_5x += hours_to_convert
+    summary.overtime_explanations.append(
+        OvertimeExplanation(
+            None,
+            f"Regular-hour cap: {hours_to_convert:.2f}h moved from regular to 1.5x "
+            f"(report regular hours capped at {cap:.2f}h).",
+        )
+    )
 
 
 def main():
