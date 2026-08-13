@@ -13,10 +13,15 @@ REMBG_TIMEOUT = 30  # Timeout in seconds for image processing requests
 # Default background replacement color (#ffffff or #ffffffff)
 DEFAULT_BG_COLOR = "#ffffff"
 
-# Shopify API settings (for Stage 2+)
+# Shopify App Credentials & Store API settings
 SHOPIFY_STORE_URL = "your-shop.myshopify.com"
+SHOPIFY_CLIENT_ID = "your-shopify-client-id"
+SHOPIFY_CLIENT_SECRET = "your-shopify-client-secret"
 SHOPIFY_ADMIN_API_ACCESS_TOKEN = "shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
 SHOPIFY_API_VERSION = "2024-04"
+
+# GCP Pub/Sub & Webhook Integration settings
+SHOPIFY_PUBSUB_SERVICE_ACCOUNT = "delivery@shopify-pubsub-webhooks.iam.gserviceaccount.com"
 
 # Idempotency Metafield settings (for Stage 3+)
 SHOPIFY_METAFIELD_NAMESPACE = "custom"

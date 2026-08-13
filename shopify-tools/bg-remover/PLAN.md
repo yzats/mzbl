@@ -13,7 +13,7 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 ```
 
 - **Pluggable Removers:** Abstract strategy pattern (`BaseBackgroundRemover`) to support hosted `rembg` instances.
-- **Idempotency Guard:** Shopify product metafield (`custom.bg_removed`) to prevent infinite webhook loops.
+- **Idempotency Guard:** Media-level alt text (`alt="hide"` for original, `alt="bg-removed"` for processed) to prevent reprocessing and infinite loops.
 - **Resilience:** GCP Cloud Tasks for rate limiting + auto-retry, plus a daily Reconciliation Cron job to catch missed webhooks.
 - **Testing:** Unit tests required at every stage.
 
@@ -32,26 +32,25 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
   - [x] Mocked `rembg` API tests (successful response, retryable 503 errors, non-retryable 400 errors, bad image payload).
 
 ### Stage 2: Shopify Single Image Processor
-- [ ] Setup Shopify GraphQL Admin API client setup.
-- [ ] Implement single image processing pipeline:
+- [x] Setup Shopify GraphQL Admin API client (`ShopifyGraphQLClient`).
+- [x] Implement single image processing pipeline:
   1. Download original image from Shopify CDN URL.
-  2. Pass image bytes through remover provider.
+  2. Pass image bytes through remover provider (`RembgHostedRemover`).
   3. Upload background-removed PNG back via `stagedUploadsCreate`.
   4. Replace / add image using `productCreateMedia` / `productDeleteMedia`.
-- [ ] Write CLI script to process 1st image of a given Shopify product ID.
-- [ ] Write unit tests:
-  - [ ] Mocked Shopify GraphQL API response handlers.
-  - [ ] Image download and upload error handling tests.
+- [x] Write CLI script to process product images (`process_product.py`).
+- [x] Write unit tests (`tests/test_shopify.py`):
+  - [x] Mocked Shopify GraphQL API response handlers.
+  - [x] Image download and upload error handling tests.
 
 ### Stage 3: Full Product Processing & Idempotency Guard
 - [ ] Implement batch media processing for all images on a product.
 - [ ] Preserve original media ordering / positions on the product.
-- [ ] Implement idempotency guard:
-  - [ ] Check if product metafield `custom.bg_removed == true` before processing.
-  - [ ] Set metafield `custom.bg_removed = true` upon successful processing.
-- [ ] Write CLI script to safely process an entire product by ID/handle.
+- [ ] Implement media-level idempotency guard:
+  - [ ] Check media `altText` before processing (`alt == "hide"` or `alt == "bg-removed"` -> skip).
+- [ ] Write CLI script to safely process an entire product by ID/handle (`process_product.py`).
 - [ ] Write unit tests:
-  - [ ] Idempotency guard logic (verifying skip on already-processed products).
+  - [ ] Idempotency guard logic (verifying skip on already-processed media).
   - [ ] Image order preservation logic.
 
 ### Stage 4: Webhook Receiver & Local Async Execution
@@ -65,7 +64,8 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
   - [ ] Queue dispatch & worker execution tests.
 
 ### Stage 5: Production GCP Deployment, Queueing, Rate Limiting & Reconciliation
-- [ ] Deploy Webhook Receiver Cloud Function (`POST /webhook`).
+- [ ] Direct Shopify Webhooks to **Google Cloud Pub/Sub** using Shopify's official Pub/Sub integration (`delivery@shopify-pubsub-webhooks.iam.gserviceaccount.com`).
+- [ ] Deploy Webhook Consumer Cloud Function triggered by GCP Pub/Sub / Cloud Tasks.
 - [ ] Provision GCP Cloud Tasks Queue:
   - [ ] Set max dispatches/sec & concurrency limits for Shopify API / rembg hosted API.
   - [ ] Configure exponential backoff retry rules and Dead-Letter Queue (DLQ).

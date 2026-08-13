@@ -37,13 +37,17 @@ class RembgHostedRemover(BaseBackgroundRemover):
         self.backoff_delay = backoff_delay
 
     def remove_background(
-        self, image_data: bytes, bg_color: Optional[str] = "#ffffff"
+        self,
+        image_data: bytes,
+        bg_color: Optional[str] = "#ffffff",
+        height: Optional[int] = None,
     ) -> bytes:
         """Sends raw image bytes to rembg.com API with exponential backoff retries.
 
         Args:
             image_data: Raw input image bytes.
             bg_color: Optional solid background color hex (e.g. "#ffffff").
+            height: Optional target height in pixels (sent as 'h' parameter).
 
         Returns:
             bytes: Output image bytes directly from API.
@@ -71,6 +75,9 @@ class RembgHostedRemover(BaseBackgroundRemover):
 
             if bg_color:
                 data["bg_color"] = bg_color
+
+            if height is not None and height > 0:
+                data["h"] = str(height)
 
             files = {"image": ("image.jpg", image_data, "image/jpeg")}
 
