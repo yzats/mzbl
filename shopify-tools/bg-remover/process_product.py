@@ -88,14 +88,6 @@ def process_image(
     new_media_id = new_media.get("id")
     print(f"       Successfully created new media ID: {new_media_id} (alt='{new_image_alt}')")
 
-    # Explicitly update alt text to guarantee it is saved on Shopify
-    if new_media_id:
-        shopify_client.update_product_media(
-            product_id=product_id,
-            media_id=new_media_id,
-            alt_text=new_image_alt,
-        )
-
     # Step 5: Explicitly set new media to original image's position
     if new_media_id:
         print(f"    6. Moving new background-removed image to position {target_position}...")
@@ -175,7 +167,9 @@ def main():
 
         print(f"Found {len(unprocessed_images)} image(s) to process.")
 
-        for image_info in unprocessed_images:
+        # Process in reverse order (bottom-to-top) so newly inserted images higher up
+        # do not shift the position indices of unprocessed images earlier in the gallery
+        for image_info in reversed(unprocessed_images):
             process_image(
                 shopify_client=shopify_client,
                 remover=remover,
