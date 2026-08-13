@@ -1,5 +1,5 @@
 # Configuration files with sensitive data
-sqs-tools/config.py
+config.py
 .env
 *.env
 
