@@ -145,7 +145,6 @@ class ShopifyGraphQLClient:
                     url
                     altText
                     width
-                    height
                   }
                 }
               }
@@ -190,7 +189,6 @@ class ShopifyGraphQLClient:
                 "position": media_pos,
                 "sequence": sequence,
                 "width": image_info.get("width"),
-                "height": image_info.get("height"),
                 "product_id": product.get("id"),
                 "product_title": product.get("title"),
             }]
@@ -219,7 +217,6 @@ class ShopifyGraphQLClient:
                 "alt_text": raw_alt,
                 "position": idx,
                 "width": image_info.get("width"),
-                "height": image_info.get("height"),
                 "product_id": product.get("id"),
                 "product_title": product.get("title"),
             })

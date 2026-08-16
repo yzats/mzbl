@@ -75,7 +75,6 @@ def main():
         print(f"Product: {image_info.get('product_title')} (ID: {image_info.get('product_id')})")
         print(f"Image ID: {image_info.get('image_id')}")
         print(f"CDN URL: {image_info.get('url')}")
-        print(f"Dimensions: {image_info.get('width')}x{image_info.get('height')}")
 
         image_url = image_info["url"]
         print(f"Downloading image from CDN...")

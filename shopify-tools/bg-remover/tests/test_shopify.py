@@ -27,7 +27,6 @@ def test_get_unprocessed_images_success(mocker):
                                 "url": "https://cdn.shopify.com/s/files/1/test.jpg",
                                 "altText": "Test Image",
                                 "width": 1000,
-                                "height": 1000,
                             },
                         }
                     ]

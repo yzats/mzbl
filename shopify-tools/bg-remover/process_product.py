@@ -44,12 +44,11 @@ def process_image(
     original_media_id = image_info["media_id"]
     original_url = image_info["url"]
     target_position = str(image_info.get("position", 0))
-    orig_height = image_info.get("height")
     product_title = image_info.get("product_title", "Product")
     clean_orig_id = original_media_id.split("/")[-1]
     upload_filename = f"{clean_orig_id}-bg-removed.png"
 
-    print(f"\n--- Processing image ID: {original_media_id} at position {target_position} (height: {orig_height}px) ---")
+    print(f"\n--- Processing image ID: {original_media_id} at position {target_position} ---")
     print(f"    Product: '{product_title}'")
 
     # Step 1: Download image bytes from Shopify CDN
@@ -57,10 +56,10 @@ def process_image(
     original_bytes = shopify_client.download_image_bytes(original_url)
     print(f"       Downloaded {len(original_bytes)} bytes.")
 
-    # Step 2: Remove background via rembg API (passing height parameter 'h' to preserve original height)
-    print(f"    2. Removing background via rembg API (bg_color={bg_color}, h={orig_height})...")
+    # Step 2: Remove background via rembg API
+    print(f"    2. Removing background via rembg API (bg_color={bg_color})...")
     processed_bytes = remover.remove_background(
-        original_bytes, bg_color=bg_color, height=orig_height
+        original_bytes, bg_color=bg_color
     )
     print(f"       Processed image: {len(processed_bytes)} bytes.")
 
