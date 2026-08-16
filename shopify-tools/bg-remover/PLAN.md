@@ -25,6 +25,7 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 - [x] Implement `BaseBackgroundRemover` abstract interface.
 - [x] Implement `RembgHostedRemover` (HTTP client targeting hosted `rembg` API).
 - [x] Support background hex color parameter (defaulting to white `#FFFFFF`).
+- [x] Skip height/dimension parameters in API calls to let `rembg` use default image processing and sizing.
 - [x] Implement error classification (retryable vs non-retryable) with exponential backoff retries.
 - [x] Write CLI runner script to process a local file (`input.jpg` -> `output.png`).
 - [x] Write unit tests:
@@ -44,36 +45,48 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
   - [x] Image download and upload error handling tests.
 
 ### Stage 3: Full Product Processing & Idempotency Guard
-- [ ] Implement batch media processing for all images on a product.
-- [ ] Preserve original media ordering / positions on the product.
-- [ ] Implement media-level idempotency guard:
-  - [ ] Check media `altText` before processing (`alt == "hide"` or `alt == "bg-removed"` -> skip).
-- [ ] Write CLI script to safely process an entire product by ID/handle (`process_product.py`).
-- [ ] Write unit tests:
-  - [ ] Idempotency guard logic (verifying skip on already-processed media).
-  - [ ] Image order preservation logic.
+- [x] Implement batch media processing for all images on a product.
+- [x] Preserve original media ordering / positions on the product.
+- [x] Implement media-level idempotency guard:
+  - [x] Check media `altText` before processing (`alt == "hide"` or `alt == "bg-removed"` -> skip).
+- [x] Write CLI script to safely process an entire product by ID/handle or target by sequence number (`process_product.py`).
+- [x] Write unit tests:
+  - [x] Idempotency guard logic (`tests/test_alt_helpers.py` verifying skip on already-processed media).
+  - [x] Image order preservation logic.
 
-### Stage 4: Webhook Receiver & Local Async Execution
-- [ ] Implement Webhook HTTP Server (FastAPI / Flask).
-- [ ] Add Shopify HMAC-SHA256 signature verification middleware/helper.
-- [ ] Implement local async in-memory task queue (decouple webhook response from background work).
-- [ ] Configure `ngrok` setup for testing live Shopify webhooks locally.
-- [ ] Write unit tests:
-  - [ ] Valid & invalid HMAC signature verification tests.
-  - [ ] Fast <500ms webhook HTTP 200 response test.
-  - [ ] Queue dispatch & worker execution tests.
+### Stage 4: Webhook Receiver & HMAC Verification (Functions Framework)
+- [x] Implement `verify_shopify_hmac()` helper to validate incoming `X-Shopify-Hmac-Sha256` headers against `SHOPIFY_CLIENT_SECRET`.
+- [x] Implement `WebhookDeduplicator` (`X-Shopify-Webhook-Id` tracking) to prevent rapid webhook retransmissions/replays.
+- [x] Implement `shopify_webhook_receiver` HTTP entrypoint using Google's `functions-framework` format.
+- [x] Parse Shopify product update/create webhook payloads and extract product ID & media info.
+- [x] Return fast `<500ms` `HTTP 200 OK` response to Shopify.
+- [x] Write unit tests (`tests/test_webhooks.py`):
+  - [x] Valid HMAC verification passes.
+  - [x] Invalid/tampered HMAC returns `HTTP 401 Unauthorized`.
+  - [x] Webhook ID deduplication test (`X-Shopify-Webhook-Id` duplicate detection).
+  - [x] Malformed payload / non-product webhook handling.
 
-### Stage 5: Production GCP Deployment, Queueing, Rate Limiting & Reconciliation
-- [ ] Direct Shopify Webhooks to **Google Cloud Pub/Sub** using Shopify's official Pub/Sub integration (`delivery@shopify-pubsub-webhooks.iam.gserviceaccount.com`).
-- [ ] Deploy Webhook Consumer Cloud Function triggered by GCP Pub/Sub / Cloud Tasks.
-- [ ] Provision GCP Cloud Tasks Queue:
-  - [ ] Set max dispatches/sec & concurrency limits for Shopify API / rembg hosted API.
-  - [ ] Configure exponential backoff retry rules and Dead-Letter Queue (DLQ).
-- [ ] Deploy Worker Cloud Function (triggered by Cloud Tasks).
-- [ ] Implement Nightly Reconciliation Job (Cloud Scheduler + Cloud Function) to process any products updated in last 24h lacking `custom.bg_removed`.
+### Stage 5: Pluggable Task Queue & Local/GCP Worker Pipeline
+- [ ] Implement `BaseTaskDispatcher` interface for dispatching background tasks.
+- [ ] Implement `LocalTaskDispatcher` (background thread execution for local dev/testing with in-memory deduplication).
+- [ ] Implement `GCPCloudTasksDispatcher` (publishes tasks to GCP Cloud Tasks queue).
+- [ ] Support GCP persistent deduplication backend (Firestore / Memorystore / Cloud Redis) for production multi-instance Cloud Functions.
+- [ ] Implement `pubsub_worker` Cloud Function entrypoint to process dispatched product removal tasks.
 - [ ] Write unit tests:
+  - [ ] Local task dispatcher thread execution test.
   - [ ] Cloud Tasks payload serialization/deserialization.
-  - [ ] Rate-limiting decorator and error backoff handling.
+  - [ ] End-to-end local queue to worker execution test.
+
+### Stage 6: Live Local Webhook Testing via ngrok & Shopify
+- [ ] Configure `ngrok` tunnel for testing live Shopify webhooks locally.
+- [ ] Register test webhook on Shopify store pointing to `https://<ngrok-url>/shopify_webhook_receiver`.
+- [ ] Perform live end-to-end test from Shopify store image upload to background removal.
+
+### Stage 7: Production GCP Deployment Ready
+- [ ] Write GCP deployment scripts (`gcloud functions deploy`).
+- [ ] Provision GCP Cloud Tasks Queue (set rate limits, max dispatches/sec, exponential backoff retries, and DLQ).
+- [ ] Provision GCP persistent deduplication backend (Firestore / Cloud Redis) for `X-Shopify-Webhook-Id` de-duplication across distributed Cloud Function instances.
+- [ ] Document GCP Cloud Tasks, Pub/Sub, Secret Manager, and Cloud Scheduler setup.
 
 ---
 
