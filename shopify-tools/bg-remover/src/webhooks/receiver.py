@@ -6,13 +6,16 @@ import functions_framework
 from flask import Request
 
 from .hmac_verifier import verify_shopify_hmac
-from .deduplicator import WebhookDeduplicator
+from src.queue.memory_stores import InMemoryDedupStore
+from src.queue.local_dispatcher import LocalTaskDispatcher
+from src.queue.worker import execute_background_removal_job
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
-# Global in-memory deduplicator instance (persists across warm Cloud Function invocations)
-deduplicator = WebhookDeduplicator(ttl_seconds=300)
+# Global instances for local/default setup
+deduplicator = InMemoryDedupStore()
+dispatcher = LocalTaskDispatcher(worker_func=execute_background_removal_job)
 
 
 def get_webhook_secret() -> str:
@@ -54,7 +57,7 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
     print(f"  Webhook ID: {webhook_id} | Topic: {topic_header} | Shop: {shop_header}", flush=True)
 
     # Check for duplicate Webhook ID
-    if webhook_id and deduplicator.is_duplicate_webhook(webhook_id):
+    if webhook_id and deduplicator.is_duplicate(webhook_id, ttl_seconds=300):
         print(f"  [200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}", flush=True)
         return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID"}), 200, {"Content-Type": "application/json"}
 
@@ -83,11 +86,19 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
     else:
         gql_product_id = str(product_id)
 
-    print(f"  [200 SUCCESS] Valid webhook for Product ID: {gql_product_id}", flush=True)
-    logger.info(f"Received valid webhook for shop '{shop_header}', topic '{topic_header}', product ID '{gql_product_id}'")
+    # Dispatch background worker task asynchronously
+    task_id = dispatcher.dispatch_product_task(
+        product_id=gql_product_id,
+        shop_domain=shop_header,
+        topic=topic_header,
+    )
+
+    print(f"  [200 SUCCESS] Dispatched task {task_id} for Product ID: {gql_product_id}", flush=True)
+    logger.info(f"Received valid webhook for shop '{shop_header}', topic '{topic_header}', product ID '{gql_product_id}', task '{task_id}'")
 
     return json.dumps({
         "status": "success",
+        "task_id": task_id,
         "product_id": gql_product_id,
         "topic": topic_header,
         "shop": shop_header

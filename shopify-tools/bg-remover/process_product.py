@@ -32,6 +32,117 @@ from src.shopify import (
 from src.removers import RembgHostedRemover, BackgroundRemoverError
 
 
+def process_product_batch(
+    shopify_client: ShopifyGraphQLClient,
+    remover: RembgHostedRemover,
+    product_id: str,
+    unprocessed_images: list,
+    bg_color: str,
+    delete_original: bool = False,
+) -> int:
+    """Process all unprocessed images for a product in a batched pipeline.
+
+    1. Removes backgrounds & uploads staged files for all images.
+    2. Batches creation of new media (`productCreateMedia`).
+    3. Batches reordering of new media (`productReorderMedia`).
+    4. Batches updating original media alt text (`productUpdateMedia`) or deletion (`productDeleteMedia`).
+    """
+    if not unprocessed_images:
+        return 0
+
+    product_title = unprocessed_images[0].get("product_title", "Product")
+    print(f"\n--- Batch processing {len(unprocessed_images)} image(s) for Product: '{product_title}' ({product_id}) ---")
+
+    # Step 1: Process images and perform staged uploads
+    prepared_items = []
+    failed_images = []
+
+    for img_info in unprocessed_images:
+        media_id = img_info["media_id"]
+        original_url = img_info["url"]
+        pos = str(img_info.get("position", 0))
+        clean_id = media_id.split("/")[-1]
+        upload_filename = f"{clean_id}-bg-removed.png"
+
+        try:
+            print(f"  1. [Download & rembg] Processing media ID: {media_id} (position {pos})...")
+            orig_bytes = shopify_client.download_image_bytes(original_url)
+            processed_bytes = remover.remove_background(orig_bytes, bg_color=bg_color)
+
+            staged_target = shopify_client.create_staged_upload(filename=upload_filename)
+            resource_url = shopify_client.upload_file_to_staged_target(
+                staged_target=staged_target,
+                file_bytes=processed_bytes,
+                filename=upload_filename,
+            )
+
+            prepared_items.append({
+                "original_media_id": media_id,
+                "original_alt": img_info.get("alt_text") or "",
+                "target_position": pos,
+                "resource_url": resource_url,
+            })
+            print(f"     Staged URL ready for media ID: {media_id}")
+
+        except Exception as e:
+            print(f"  ⚠️ Error processing media ID {media_id}: {e}")
+            failed_images.append((img_info, e))
+
+    if not prepared_items:
+        if failed_images:
+            raise failed_images[0][1]
+        return 0
+
+    # Step 2: Batched productCreateMedia
+    print(f"\n  2. [Batch GraphQL] Creating {len(prepared_items)} new product media items...")
+    create_payload = [
+        {"originalSource": item["resource_url"], "alt": "bg-removed"}
+        for item in prepared_items
+    ]
+    created_media_list = shopify_client.create_product_media_batch(
+        product_id=product_id,
+        media_items=create_payload,
+    )
+
+    # Step 3: Batched productReorderMedia & update/delete originals
+    moves = []
+    original_updates = []
+    original_deletes = []
+
+    for item, created_media in zip(prepared_items, created_media_list):
+        new_media_id = created_media.get("id")
+        if new_media_id:
+            moves.append({
+                "id": new_media_id,
+                "newPosition": item["target_position"],
+            })
+
+        orig_id = item["original_media_id"]
+        if orig_id:
+            if delete_original:
+                original_deletes.append(orig_id)
+            else:
+                updated_alt = append_alt_tag(item["original_alt"], "hide")
+                original_updates.append({
+                    "id": orig_id,
+                    "alt": updated_alt,
+                })
+
+    if moves:
+        print(f"  3. [Batch GraphQL] Reordering {len(moves)} media item(s)...")
+        shopify_client.reorder_product_media(product_id=product_id, moves=moves)
+
+    if original_deletes:
+        print(f"  4. [Batch GraphQL] Deleting {len(original_deletes)} original media item(s)...")
+        shopify_client.delete_product_media(product_id=product_id, media_ids=original_deletes)
+    elif original_updates:
+        print(f"  4. [Batch GraphQL] Updating alt='hide' for {len(original_updates)} original media item(s)...")
+        shopify_client.update_product_media_batch(product_id=product_id, updates=original_updates)
+
+    print(f"✨ Successfully batch-processed {len(prepared_items)} image(s) for product {product_id}.")
+    return len(prepared_items)
+
+
 def process_image(
     shopify_client: ShopifyGraphQLClient,
     remover: RembgHostedRemover,
@@ -40,79 +151,15 @@ def process_image(
     bg_color: str,
     delete_original: bool = False,
 ) -> None:
-    """Process a single image for a product: remove background, upload, reorder, and tag/delete original."""
-    original_media_id = image_info["media_id"]
-    original_url = image_info["url"]
-    target_position = str(image_info.get("position", 0))
-    product_title = image_info.get("product_title", "Product")
-    clean_orig_id = original_media_id.split("/")[-1]
-    upload_filename = f"{clean_orig_id}-bg-removed.png"
-
-    print(f"\n--- Processing image ID: {original_media_id} at position {target_position} ---")
-    print(f"    Product: '{product_title}'")
-
-    # Step 1: Download image bytes from Shopify CDN
-    print("    1. Downloading image bytes from Shopify CDN...")
-    original_bytes = shopify_client.download_image_bytes(original_url)
-    print(f"       Downloaded {len(original_bytes)} bytes.")
-
-    # Step 2: Remove background via rembg API
-    print(f"    2. Removing background via rembg API (bg_color={bg_color})...")
-    processed_bytes = remover.remove_background(
-        original_bytes, bg_color=bg_color
-    )
-    print(f"       Processed image: {len(processed_bytes)} bytes.")
-
-    # Step 3: Staged upload to Shopify
-    print(f"    3. Creating staged upload target on Shopify (filename: {upload_filename})...")
-    staged_target = shopify_client.create_staged_upload(filename=upload_filename)
-
-    print("    4. Uploading modified image to Shopify staged storage...")
-    resource_url = shopify_client.upload_file_to_staged_target(
-        staged_target=staged_target,
-        file_bytes=processed_bytes,
-        filename=upload_filename,
-    )
-    print(f"       Staged Resource URL: {resource_url}")
-
-    # Step 4: Attach new media to Product with alt_text = "bg-removed"
-    print("    5. Attaching new media to Shopify product...")
-    new_image_alt = "bg-removed"
-
-    new_media = shopify_client.create_product_media(
+    """Process a single image using process_product_batch."""
+    process_product_batch(
+        shopify_client=shopify_client,
+        remover=remover,
         product_id=product_id,
-        original_source_url=resource_url,
-        alt_text=new_image_alt,
+        unprocessed_images=[image_info],
+        bg_color=bg_color,
+        delete_original=delete_original,
     )
-    new_media_id = new_media.get("id")
-    print(f"       Successfully created new media ID: {new_media_id} (alt='{new_image_alt}')")
-
-    # Step 5: Explicitly set new media to original image's position
-    if new_media_id:
-        print(f"    6. Moving new background-removed image to position {target_position}...")
-        shopify_client.reorder_product_media(
-            product_id=product_id,
-            moves=[{"id": new_media_id, "newPosition": target_position}],
-        )
-
-    # Step 6: Update original media alt text by appending 'hide' in comma-separated tag format
-    if original_media_id:
-        if delete_original:
-            print(f"    7. Deleting original media ID: {original_media_id}...")
-            deleted_ids = shopify_client.delete_product_media(
-                product_id=product_id, media_ids=[original_media_id]
-            )
-            print(f"       Deleted media IDs: {deleted_ids}")
-        else:
-            original_alt = image_info.get("alt_text") or ""
-            updated_alt = append_alt_tag(original_alt, "hide")
-            print(f"    7. Updating original media ID {original_media_id} alt text to '{updated_alt}'...")
-            shopify_client.update_product_media(
-                product_id=product_id,
-                media_id=original_media_id,
-                alt_text=updated_alt,
-            )
-            print(f"       Original image preserved with alt='{updated_alt}'.")
 
 
 def main():
@@ -166,17 +213,15 @@ def main():
 
         print(f"Found {len(unprocessed_images)} image(s) to process.")
 
-        # Process in reverse order (bottom-to-top) so newly inserted images higher up
-        # do not shift the position indices of unprocessed images earlier in the gallery
-        for image_info in reversed(unprocessed_images):
-            process_image(
-                shopify_client=shopify_client,
-                remover=remover,
-                product_id=args.product_id,
-                image_info=image_info,
-                bg_color=DEFAULT_BG_COLOR,
-                delete_original=DELETE_ORIGINAL,
-            )
+        # Batch process all unprocessed images for the product in a single batched run
+        process_product_batch(
+            shopify_client=shopify_client,
+            remover=remover,
+            product_id=args.product_id,
+            unprocessed_images=unprocessed_images,
+            bg_color=DEFAULT_BG_COLOR,
+            delete_original=DELETE_ORIGINAL,
+        )
 
         print(f"\n✨ Done! Processed {len(unprocessed_images)} image(s) on product {args.product_id}.")
 

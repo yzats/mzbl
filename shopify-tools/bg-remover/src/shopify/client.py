@@ -352,16 +352,28 @@ class ShopifyGraphQLClient:
     def create_product_media(
         self, product_id: str, original_source_url: str, alt_text: str = ""
     ) -> Dict[str, Any]:
-        """Attach a newly uploaded image media to a product.
+        """Attach a single newly uploaded image media to a product."""
+        results = self.create_product_media_batch(
+            product_id=product_id,
+            media_items=[{"originalSource": original_source_url, "alt": alt_text}],
+        )
+        return results[0] if results else {}
+
+    def create_product_media_batch(
+        self, product_id: str, media_items: List[Dict[str, str]]
+    ) -> List[Dict[str, Any]]:
+        """Attach multiple newly uploaded image media items to a product in a single batched GraphQL call.
 
         Args:
             product_id: Shopify product ID (e.g. "gid://shopify/Product/12345").
-            original_source_url: The resourceUrl returned from staged upload.
-            alt_text: Optional alt text.
+            media_items: List of dicts, e.g. [{"originalSource": "...", "alt": "bg-removed"}]
 
         Returns:
-            Dict[str, Any]: Created media object information.
+            List[Dict[str, Any]]: List of created media objects.
         """
+        if not media_items:
+            return []
+
         if not product_id.startswith("gid://shopify/Product/"):
             gql_product_id = f"gid://shopify/Product/{product_id}"
         else:
@@ -382,15 +394,17 @@ class ShopifyGraphQLClient:
           }
         }
         """
+        formatted_media = []
+        for item in media_items:
+            formatted_media.append({
+                "originalSource": item["originalSource"],
+                "mediaContentType": "IMAGE",
+                "alt": item.get("alt", ""),
+            })
+
         variables = {
             "productId": gql_product_id,
-            "media": [
-                {
-                    "originalSource": original_source_url,
-                    "mediaContentType": "IMAGE",
-                    "alt": alt_text,
-                }
-            ],
+            "media": formatted_media,
         }
 
         data = self._execute_query(mutation, variables)
@@ -400,8 +414,7 @@ class ShopifyGraphQLClient:
             err_msg = "; ".join(f"{e.get('field')}: {e.get('message')}" for e in errors)
             raise NonRetryableShopifyError(f"productCreateMedia failed: {err_msg}")
 
-        media_list = result.get("media", [])
-        return media_list[0] if media_list else {}
+        return result.get("media", [])
 
     def delete_product_media(self, product_id: str, media_ids: List[str]) -> List[str]:
         """Delete old media objects from a product.
@@ -447,16 +460,28 @@ class ShopifyGraphQLClient:
     def update_product_media(
         self, product_id: str, media_id: str, alt_text: str
     ) -> Dict[str, Any]:
-        """Update media details (such as alt text) for a product.
+        """Update media details for a single item on a product."""
+        results = self.update_product_media_batch(
+            product_id=product_id,
+            updates=[{"id": media_id, "alt": alt_text}],
+        )
+        return results[0] if results else {}
+
+    def update_product_media_batch(
+        self, product_id: str, updates: List[Dict[str, str]]
+    ) -> List[Dict[str, Any]]:
+        """Update media details (such as alt text) for multiple items on a product in a single batched GraphQL call.
 
         Args:
             product_id: Shopify product ID.
-            media_id: Media ID to update.
-            alt_text: New alt text (e.g. "hide").
+            updates: List of dicts, e.g. [{"id": "gid://shopify/MediaImage/123", "alt": "hide"}]
 
         Returns:
-            Dict[str, Any]: Updated media information.
+            List[Dict[str, Any]]: List of updated media objects.
         """
+        if not updates:
+            return []
+
         if not product_id.startswith("gid://shopify/Product/"):
             gql_product_id = f"gid://shopify/Product/{product_id}"
         else:
@@ -478,12 +503,7 @@ class ShopifyGraphQLClient:
         """
         variables = {
             "productId": gql_product_id,
-            "media": [
-                {
-                    "id": media_id,
-                    "alt": alt_text,
-                }
-            ],
+            "media": updates,
         }
 
         data = self._execute_query(mutation, variables)
@@ -493,8 +513,7 @@ class ShopifyGraphQLClient:
             err_msg = "; ".join(f"{e.get('field')}: {e.get('message')}" for e in errors)
             raise NonRetryableShopifyError(f"productUpdateMedia failed: {err_msg}")
 
-        media_list = result.get("media", [])
-        return media_list[0] if media_list else {}
+        return result.get("media", [])
 
     def reorder_product_media(
         self, product_id: str, moves: List[Dict[str, Any]]
