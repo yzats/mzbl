@@ -1,5 +1,27 @@
+# Configuration & Secrets
 config.py
 .env
+*.env
+gcp-key.json
+*.json
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+
+# Python & Caches
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .pytest_cache/
+*.png
+*.jpg
+*.jpeg
+
+# Output / Temp
+output.png
+output/
+tmp/

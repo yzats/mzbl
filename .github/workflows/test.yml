@@ -1,0 +1,36 @@
+name: Run Unit Tests
+
+on:
+  push:
+    paths:
+      - 'shopify-tools/bg-remover/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - 'shopify-tools/bg-remover/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r shopify-tools/bg-remover/requirements.txt
+
+      - name: Run Pytest
+        run: |
+          PYTHONPATH=shopify-tools/bg-remover:shopify-tools pytest shopify-tools/bg-remover/tests

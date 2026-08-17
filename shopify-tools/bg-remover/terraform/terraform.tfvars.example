@@ -1,0 +1,7 @@
+# Terraform Variables Configuration Template
+# Copy or rename this file to terraform.tfvars and fill in your actual GCP & API credentials
+gcp_project_id             = "your-gcp-project-id"
+gcp_region                 = "us-central1"
+shopify_webhook_secret     = "your_shopify_webhook_secret_here"
+shopify_admin_access_token = "shpat_your_shopify_admin_access_token_here"
+rembg_api_key              = "your_rembg_api_key_here"

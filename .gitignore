@@ -1,3 +1,11 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+gcp-key.json
+
 # Configuration files with sensitive data
 config.py
 .env

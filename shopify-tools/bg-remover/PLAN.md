@@ -85,15 +85,16 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
   - [x] End-to-end local queue to worker execution test.
 
 ### Stage 6: Live Local Webhook Testing via ngrok & Shopify
-- [ ] Configure `ngrok` tunnel for testing live Shopify webhooks locally.
-- [ ] Register test webhook on Shopify store pointing to `https://<ngrok-url>/shopify_webhook_receiver`.
-- [ ] Perform live end-to-end test from Shopify store image upload to background removal.
+- [x] Create helper runner script (`run_local_server.py`) to launch local `functions-framework` server on port 8080.
+- [x] Configure `ngrok` tunnel (`ngrok http 8080`) for receiving live Shopify webhooks locally.
+- [x] Register webhook on Shopify store pointing to `https://<ngrok-url>`.
+- [x] Perform live end-to-end test from Shopify store image upload to background removal and verify trace logs & idempotency cascade stopping.
 
 ### Stage 7: Production GCP Deployment Ready
-- [ ] Write GCP deployment scripts (`gcloud functions deploy`).
-- [ ] Provision GCP Cloud Tasks Queue (set rate limits, max dispatches/sec, exponential backoff retries, and DLQ).
-- [ ] Provision GCP Cloud Firestore collections (`webhook_dedup` and `product_locks` with TTL indexing enabled).
-- [ ] Document GCP Cloud Tasks, Pub/Sub, Secret Manager, and Cloud Scheduler setup.
+- [x] Write GCP automated deployment script (`deploy_gcp.sh`).
+- [x] Provision GCP Cloud Tasks Queue (`bg-remover-queue` with rate limits & retries).
+- [x] Provision GCP Cloud Firestore collections (`webhook_dedup` and `product_locks` via `GCPFirestoreDedupStore` / `GCPFirestoreLockStore`).
+- [x] Document GCP Cloud Tasks, Secret Manager, IAM, and deployment procedure in `ARCHITECTURE.md`.
 
 ---
 
