@@ -1,21 +1,21 @@
-name: Run Unit Tests
+name: Test Shopify Background Remover
 
 on:
   push:
     paths:
       - 'shopify-tools/bg-remover/**'
-      - '.github/workflows/**'
+      - '.github/workflows/shopify-bg-remover-test.yml'
   pull_request:
     branches:
       - '**'
     paths:
       - 'shopify-tools/bg-remover/**'
-      - '.github/workflows/**'
+      - '.github/workflows/shopify-bg-remover-test.yml'
   workflow_dispatch:
 
 jobs:
   test:
-    name: Run Unit Tests
+    name: Run Shopify BG Remover Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code

@@ -1,4 +1,4 @@
-name: Deploy to GCP Cloud Functions
+name: Deploy Shopify Background Remover to GCP
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ env:
 
 jobs:
   deploy:
-    name: Deploy to GCP
+    name: Manual Deploy Shopify BG Remover to GCP
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
