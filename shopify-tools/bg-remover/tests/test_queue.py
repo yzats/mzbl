@@ -65,6 +65,8 @@ def test_worker_execute_no_images(mocker):
     mock_client.get_unprocessed_images.return_value = []
     mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
     mocker.patch("src.queue.worker.RembgHostedRemover")
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "test.myshopify.com")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
 
     payload = {"product_id": "gid://shopify/Product/12345", "shop_domain": "test.myshopify.com"}
     res_dict, status_code = execute_background_removal_job(payload)
