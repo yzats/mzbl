@@ -5,12 +5,20 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 5.0"
     }
+    github = {
+      source  = "integrations/github"
+      version = "~> 6.0"
+    }
   }
 }
 
 provider "google" {
   project = var.gcp_project_id
   region  = var.gcp_region
+}
+
+provider "github" {
+  owner = var.github_owner
 }
 
 # ==============================================================================
@@ -74,7 +82,6 @@ resource "google_cloud_tasks_queue" "bg_remover_queue" {
 
   rate_limits {
     max_dispatches_per_second = 5.0
-    max_burst_size            = 10
     max_concurrent_dispatches = 10
   }
 
@@ -148,7 +155,7 @@ resource "google_project_iam_member" "sa_datastore_user" {
 
 resource "google_project_iam_member" "sa_cloudtasks_enforcer" {
   project = var.gcp_project_id
-  role    = "roles/cloudtasks.enforcer"
+  role    = "roles/cloudtasks.taskRunner"
   member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
 }
 
@@ -196,4 +203,19 @@ resource "google_project_iam_member" "deployer_cloudtasks_admin" {
 
 resource "google_service_account_key" "github_deployer_key" {
   service_account_id = google_service_account.github_deployer.name
+}
+
+# ==============================================================================
+# 6. GitHub Repository Secrets Automation
+# ==============================================================================
+resource "github_actions_secret" "gcp_project_id_secret" {
+  repository  = var.github_repo_name
+  secret_name = "GCP_PROJECT_ID"
+  value       = var.gcp_project_id
+}
+
+resource "github_actions_secret" "gcp_sa_key_secret" {
+  repository  = var.github_repo_name
+  secret_name = "GCP_SA_KEY"
+  value       = base64decode(google_service_account_key.github_deployer_key.private_key)
 }

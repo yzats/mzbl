@@ -380,7 +380,87 @@ python3 shopify-tools/bg-remover/process_product.py --product-id <PRODUCT_ID>
 
 ---
 
-## 🔄 11. Synchronization & Maintenance Instructions
+## 🚀 11. Infrastructure Provisioning & Deployment Specification
+
+Deployment and infrastructure management are strictly separated into a **2-Phase Lifecycle**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ PHASE 1: INFRASTRUCTURE PROVISIONING (Local Machine — One-Time / Terraform)      │
+│                                                                                 │
+│   Your Machine ──(terraform apply)──> Provisions GCP Infrastructure:           │
+│                                      ├── Required GCP APIs                       │
+│                                      ├── Firestore Database (product_locks/dedup)│
+│                                      ├── Cloud Tasks Queue (bg-remover-queue)   │
+│                                      ├── Secret Manager Secrets                 │
+│                                      └── Service Accounts & IAM Permissions     │
+│                                                                                 │
+│   Terraform automatically writes `GCP_PROJECT_ID` and `GCP_SA_KEY` to GitHub    │
+│   Repository Secrets using the `integrations/github` Terraform provider.        │
+└────────────────────────────────────────┬────────────────────────────────────────┘
+                                         │
+                                         │ Triggered Manually via GitHub UI
+                                         ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ PHASE 2: APPLICATION CODE DEPLOYMENT (GitHub Actions — Manual On-Demand)        │
+│                                                                                 │
+│   GitHub Actions ──(deploy_gcp.sh)──> Deploys Application Code & Containers:    │
+│                                       ├── Receiver Cloud Function (receiver.py) │
+│                                       └── Worker Cloud Function (worker.py)     │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### A. Phase 1: Terraform Infrastructure Provisioning (`shopify-tools/bg-remover/terraform/`)
+
+#### 1. One-Time Setup Commands
+```bash
+# 1. Login to GCP Application Default Credentials
+gcloud auth application-default login
+
+# 2. Set GitHub Token (Fine-grained PAT with Secrets: Read & Write permissions)
+export GITHUB_TOKEN="github_pat_..."
+
+# 3. Configure Terraform Variables
+cd shopify-tools/bg-remover/terraform
+cp terraform.tfvars.example terraform.tfvars
+# Fill in gcp_project_id, secrets, github_owner="yzats", github_repo_name="mzbl"
+
+# 4. Initialize and Apply
+terraform init
+terraform apply
+```
+
+#### 2. How GitHub Secrets & Service Accounts are Automated
+Terraform creates a GCP Service Account (`github-deployer`) with permissions to deploy Cloud Functions, Cloud Tasks, and Secrets. It generates a private JSON key (`google_service_account_key`) and automatically writes `GCP_PROJECT_ID` and `GCP_SA_KEY` secrets into the `yzats/mzbl` GitHub repository via `github_actions_secret`.
+
+#### 3. Token Refresh / Expiration Behavior
+- The `GITHUB_TOKEN` PAT is **ONLY used locally when running `terraform apply`**.
+- **Existing GitHub Actions workflows and Cloud Functions are NOT affected when the GitHub PAT expires.**
+- When modifying infrastructure in the future (e.g. changing Firestore TTLs or Cloud Tasks rate limits), regenerate the GitHub PAT, run `export GITHUB_TOKEN="..."`, and execute `terraform apply`.
+
+---
+
+### B. Phase 2: GitHub Actions Workflows (`.github/workflows/`)
+
+To protect this monorepo, testing is automated while deployment is strictly **manual on-demand**:
+
+#### 1. Continuous Integration Unit Testing (`.github/workflows/shopify-bg-remover-test.yml`)
+- **Trigger:** Automatic on `push` or `pull_request` to any branch **only when files inside `shopify-tools/bg-remover/**` or workflow files change**.
+- **Action:** Runs `pytest shopify-tools/bg-remover/tests` on Python 3.11.
+
+#### 2. Manual Production Deployment (`.github/workflows/shopify-bg-remover-deploy.yml`)
+- **Trigger:** Strictly **manual** (`workflow_dispatch`).
+- **How to Trigger:**
+  1. Go to GitHub $\rightarrow$ **Actions** tab.
+  2. Select **Deploy Shopify Background Remover to GCP** on the left.
+  3. Click **Run workflow** $\rightarrow$ select branch `main` $\rightarrow$ click **Run workflow**.
+- **Action:** Authenticates via `GCP_SA_KEY` secret and executes `shopify-tools/bg-remover/deploy_gcp.sh` to package code and update Cloud Functions.
+
+---
+
+## 🔄 12. Synchronization & Maintenance Instructions
 
 > **ATTENTION AGENT / DEVELOPER:**
 > Whenever you modify codebase files in `shopify-tools/bg-remover/`, verify whether your changes impact:
