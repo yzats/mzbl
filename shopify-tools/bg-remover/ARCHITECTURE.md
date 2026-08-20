@@ -463,6 +463,7 @@ Runtime service account `bg-remover-sa` IAM:
 - `roles/datastore.user`
 - `roles/cloudtasks.enqueuer`
 - `roles/cloudtasks.taskRunner`
+- `roles/iam.serviceAccountUser` **on itself** (`iam.serviceAccounts.actAs`) so `create_task` can attach an OIDC token for `bg-remover-sa`
 - Secret accessor on `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY`
 
 The Cloud Tasks service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com`) gets `roles/iam.serviceAccountTokenCreator` on `bg-remover-sa` so OIDC-authenticated worker invocations succeed.

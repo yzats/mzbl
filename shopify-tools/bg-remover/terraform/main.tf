@@ -257,6 +257,13 @@ data "google_project" "current" {
   project_id = var.gcp_project_id
 }
 
+# Cloud Tasks create_task with oidc_token requires the caller to actAs the OIDC SA.
+resource "google_service_account_iam_member" "runtime_sa_self_user" {
+  service_account_id = google_service_account.bg_remover_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.bg_remover_sa.email}"
+}
+
 resource "google_service_account_iam_member" "cloudtasks_token_creator" {
   service_account_id = google_service_account.bg_remover_sa.name
   role               = "roles/iam.serviceAccountTokenCreator"
