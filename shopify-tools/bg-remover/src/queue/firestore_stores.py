@@ -27,9 +27,9 @@ class GCPFirestoreLockStore(BaseLockStore):
         try:
             from google.cloud import firestore
             self.db = firestore.Client(project=project_id)
-        except ImportError:
+        except Exception as e:
             self.db = None
-            logger.warning("google-cloud-firestore package not installed. FirestoreLockStore operating in mock mode.")
+            logger.warning("FirestoreLockStore client unavailable (%s); operating in mock mode.", e)
 
     def acquire_lock(self, lock_key: str, ttl_seconds: int = 120) -> bool:
         if not self.db:
@@ -78,9 +78,9 @@ class GCPFirestoreDedupStore(BaseDedupStore):
         try:
             from google.cloud import firestore
             self.db = firestore.Client(project=project_id)
-        except ImportError:
+        except Exception as e:
             self.db = None
-            logger.warning("google-cloud-firestore package not installed. FirestoreDedupStore operating in mock mode.")
+            logger.warning("FirestoreDedupStore client unavailable (%s); operating in mock mode.", e)
 
     def is_duplicate(self, key: str, ttl_seconds: int = 300) -> bool:
         if not key or not self.db:

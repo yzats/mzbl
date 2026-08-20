@@ -72,7 +72,9 @@ def test_firestore_document_id_is_path_safe():
 
 
 def test_firestore_lock_store_uses_hashed_document_id():
-    store = GCPFirestoreLockStore()
+    store = GCPFirestoreLockStore.__new__(GCPFirestoreLockStore)
+    store.collection_name = "product_locks"
+    store.project_id = None
     mock_db = MagicMock()
     mock_doc = MagicMock()
     mock_doc.exists = False
@@ -85,6 +87,11 @@ def test_firestore_lock_store_uses_hashed_document_id():
     called_id = mock_db.collection.return_value.document.call_args[0][0]
     assert called_id == firestore_document_id(lock_key)
     assert "/" not in called_id
+
+
+def test_firestore_lock_store_init_without_credentials():
+    store = GCPFirestoreLockStore(project_id="ci-no-credentials")
+    assert store.collection_name == "product_locks"
 
 
 def test_worker_execute_no_images(mocker):
