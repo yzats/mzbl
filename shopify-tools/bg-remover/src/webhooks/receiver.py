@@ -104,8 +104,10 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
 
     # Check for duplicate Webhook ID
     if webhook_id and get_deduplicator().is_duplicate(webhook_id, ttl_seconds=300):
-        print(f"  [200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}", flush=True)
-        return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID"}), 200, {"Content-Type": "application/json"}
+        msg = f"[200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}"
+        print(msg, flush=True)
+        logger.warning(msg)
+        return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID", "webhook_id": webhook_id}), 200, {"Content-Type": "application/json"}
 
     print(
         f"  HMAC Header present: {'Yes' if hmac_header else 'No'} | "
@@ -137,18 +139,47 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
         gql_product_id = str(product_id)
 
     # Dispatch background worker task asynchronously
-    task_id = get_dispatcher().dispatch_product_task(
+    dispatch = get_dispatcher().dispatch_product_task(
         product_id=gql_product_id,
         shop_domain=shop_header,
         topic=topic_header,
+        metadata={
+            "updated_at": payload.get("updated_at") or "",
+            "webhook_id": webhook_id,
+        },
     )
 
-    print(f"  [200 SUCCESS] Dispatched task {task_id} for Product ID: {gql_product_id}", flush=True)
-    logger.info(f"Received valid webhook for shop '{shop_header}', topic '{topic_header}', product ID '{gql_product_id}', task '{task_id}'")
+    if dispatch.outcome == "deduplicated":
+        msg = (
+            f"[200 DEDUPED] Named Cloud Task already exists for this updated_at "
+            f"(product={gql_product_id} updated_at={payload.get('updated_at')!r} task={dispatch.task_id})"
+        )
+        print(msg, flush=True)
+        logger.warning(msg)
+        return json.dumps({
+            "status": "deduplicated",
+            "reason": "Cloud Tasks named task already exists or is tombstoned for this updated_at",
+            "task_id": dispatch.task_id,
+            "product_id": gql_product_id,
+            "updated_at": payload.get("updated_at") or "",
+            "topic": topic_header,
+            "shop": shop_header,
+        }), 200, {"Content-Type": "application/json"}
+
+    print(
+        f"  [200 SUCCESS] Dispatched task {dispatch.task_id} outcome={dispatch.outcome} "
+        f"for Product ID: {gql_product_id}",
+        flush=True,
+    )
+    logger.info(
+        f"Received valid webhook for shop '{shop_header}', topic '{topic_header}', "
+        f"product ID '{gql_product_id}', task '{dispatch.task_id}', outcome '{dispatch.outcome}'"
+    )
 
     return json.dumps({
         "status": "success",
-        "task_id": task_id,
+        "task_id": dispatch.task_id,
+        "outcome": dispatch.outcome,
         "product_id": gql_product_id,
         "topic": topic_header,
         "shop": shop_header

@@ -82,3 +82,35 @@ def test_shopify_webhook_receiver_duplicate_webhook_id(mocker):
     res2, code2, _ = shopify_webhook_receiver(mock_request)
     assert code2 == 200
     assert "Duplicate webhook ID" in res2
+
+
+def test_shopify_webhook_receiver_task_deduped(mocker):
+    secret = "secret123"
+    body = b'{"id": 111, "updated_at": "2026-08-20T06:00:00Z"}'
+    valid_hmac = base64.b64encode(
+        hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+    ).decode("utf-8")
+
+    mocker.patch("src.webhooks.receiver.get_webhook_secret", return_value=secret)
+    mock_dispatch = MagicMock()
+    mock_dispatch.task_id = "projects/p/locations/us-central1/queues/q/tasks/task-product-111-abc"
+    mock_dispatch.outcome = "deduplicated"
+    mocker.patch("src.webhooks.receiver.get_dispatcher").return_value.dispatch_product_task.return_value = mock_dispatch
+    mocker.patch("src.webhooks.receiver.get_deduplicator").return_value.is_duplicate.return_value = False
+
+    mock_request = MagicMock()
+    mock_request.method = "POST"
+    mock_request.headers = {
+        "X-Shopify-Webhook-Id": "evt-dedup-1",
+        "X-Shopify-Hmac-Sha256": valid_hmac,
+        "X-Shopify-Topic": "products/update",
+        "X-Shopify-Shop-Domain": "test.myshopify.com",
+    }
+    mock_request.get_data.return_value = body
+    mock_request.get_json.return_value = {"id": 111, "updated_at": "2026-08-20T06:00:00Z"}
+
+    res, code, _ = shopify_webhook_receiver(mock_request)
+    assert code == 200
+    body_json = json.loads(res)
+    assert body_json["status"] == "deduplicated"
+    assert "tombstoned" in body_json["reason"]

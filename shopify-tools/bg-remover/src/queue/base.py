@@ -1,5 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, NamedTuple, Optional
+
+
+class DispatchResult(NamedTuple):
+    """Outcome of dispatch_product_task.
+
+    outcome is one of: ``enqueued``, ``deduplicated``, ``simulated``.
+    """
+
+    task_id: str
+    outcome: str
 
 
 class BaseTaskDispatcher(ABC):
@@ -12,7 +22,7 @@ class BaseTaskDispatcher(ABC):
         shop_domain: str,
         topic: str = "products/update",
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> DispatchResult:
         """Dispatch a background task to process a product.
 
         Args:
@@ -22,7 +32,7 @@ class BaseTaskDispatcher(ABC):
             metadata: Optional additional key-value metadata.
 
         Returns:
-            str: Task or execution identifier.
+            DispatchResult: Task id and outcome (enqueued / deduplicated / simulated).
         """
         pass
 

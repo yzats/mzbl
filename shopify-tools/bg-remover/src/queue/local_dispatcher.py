@@ -2,7 +2,7 @@ import logging
 import threading
 from typing import Dict, Any, Optional, Callable
 
-from .base import BaseTaskDispatcher, BaseLockStore
+from .base import BaseTaskDispatcher, BaseLockStore, DispatchResult
 from .memory_stores import InMemoryLockStore
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class LocalTaskDispatcher(BaseTaskDispatcher):
         shop_domain: str,
         topic: str = "products/update",
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> DispatchResult:
         """Dispatches a product processing task in a background daemon thread."""
         payload = {
             "product_id": product_id,
@@ -46,7 +46,9 @@ class LocalTaskDispatcher(BaseTaskDispatcher):
         def _runner():
             lock_key = f"lock:product:{product_id}"
             if not self.lock_store.acquire_lock(lock_key, ttl_seconds=120):
-                logger.info(f"Local worker skipping task {task_id}: Product lock active for {product_id}")
+                msg = f"[SKIPPED] Local worker product lock active for {product_id} task={task_id}"
+                print(msg, flush=True)
+                logger.warning(msg)
                 return
 
             try:
@@ -61,4 +63,4 @@ class LocalTaskDispatcher(BaseTaskDispatcher):
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()
 
-        return task_id
+        return DispatchResult(task_id=task_id, outcome="enqueued")

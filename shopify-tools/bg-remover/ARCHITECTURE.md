@@ -70,7 +70,9 @@ Layer 1: Webhook ID Guard (DedupStore)
   └── Drop retransmitted webhooks using X-Shopify-Webhook-Id header (5 min TTL).
 
 Layer 2: Named Task Queue Guard (GCP Cloud Tasks / Local Task ID)
-  └── Task Name = task-product-{product_id_hash}. Drops duplicate enqueued tasks per product.
+  └── Task Name = task-product-{clean_pid}-{pid_hash}-{update_hash}.
+      Coalesces in-flight duplicates of the same Shopify updated_at.
+      A later product edit gets a new name (Cloud Tasks tombstones names ~1 hour).
 
 Layer 3: Distributed Worker Lock (ProductLock)
   └── Acquires 2-minute lock per product_id before starting. Concurrent runs exit immediately.
@@ -80,8 +82,8 @@ Layer 4: Media-Level Alt Text Guard (get_unprocessed_images)
 ```
 
 ### Layer Details:
-1. **Layer 1 (Receiver Level):** Tracks `X-Shopify-Webhook-Id` headers. If Shopify re-sends an identical webhook event within 5 minutes, the receiver logs `[200 SKIPPED]` and returns `status: ignored`.
-2. **Layer 2 (Queue Level):** In GCP, task names are formatted as `projects/.../tasks/task-product-{clean_pid}-{hash}`. Cloud Tasks enforces strict task name uniqueness and drops duplicate task creations.
+1. **Layer 1 (Receiver Level):** Tracks `X-Shopify-Webhook-Id` headers. If Shopify re-sends an identical webhook event within 5 minutes, the receiver logs `[200 SKIPPED]` at WARNING, returns `"status": "ignored"`.
+2. **Layer 2 (Queue Level):** In GCP, task names are `projects/.../tasks/task-product-{clean_pid}-{pid_hash}-{update_hash}`. `update_hash` is SHA-256[:12] of Shopify `updated_at` (fallback: webhook id, then a 30-second time bucket). Cloud Tasks uniqueness therefore drops **duplicate deliveries of the same product revision** while a task is queued/running, without blocking a new image upload an hour later. Completed names remain tombstoned for ~1 hour, but only for that revision's name. A hit logs `[TASK DEDUPED]` / `[200 DEDUPED]` at WARNING and returns `"status": "deduplicated"`.
 3. **Layer 3 (Worker Level):** A distributed lock `lock:product:{product_id}` is acquired before worker processing begins. If another worker thread is actively processing the same product, the new worker logs `Product lock active` and terminates cleanly (HTTP 200).
 4. **Layer 4 (Media State Level):** The worker queries Shopify GraphQL for live product media and skips any image where `alt` contains `hide` or `bg-removed`, or where the CDN URL contains `bg-removed`. When all images are tagged, the worker exits in `<100ms`.
 
@@ -105,10 +107,15 @@ All major subsystems use abstract interfaces to support provider swapping (e.g. 
 ### B. Task Dispatcher Interface (`src/queue/`)
 - **`BaseTaskDispatcher` (`base.py`)**:
   ```python
-  def dispatch_product_task(self, product_id: str, shop_domain: str, topic: str, metadata: Optional[dict]) -> str
+  class DispatchResult(NamedTuple):
+      task_id: str
+      outcome: str  # "enqueued" | "deduplicated" | "simulated"
+
+  def dispatch_product_task(self, product_id: str, shop_domain: str, topic: str, metadata: Optional[dict]) -> DispatchResult
   ```
+  Dedup is **not silent**: Cloud Tasks `ALREADY_EXISTS` and duplicate webhook IDs log `[TASK DEDUPED]` / `[200 SKIPPED]` / `[200 DEDUPED]` via `print(..., flush=True)` **and** `logger.warning` (Cloud Run default log level hides `INFO`). The HTTP JSON body uses `"status": "deduplicated"` or `"status": "ignored"` instead of `"success"`.
 - **`LocalTaskDispatcher` (`local_dispatcher.py`)**: Dispatches tasks in background Python daemon threads for local development.
-- **`GCPCloudTasksDispatcher` (`gcp_dispatcher.py`)**: Constructs GCP Cloud Tasks HTTP POST requests using Named Tasks for queue deduplication.
+- **`GCPCloudTasksDispatcher` (`gcp_dispatcher.py`)**: Named Cloud Tasks `task-product-{clean_pid}-{pid_hash}-{update_hash}` so the same Shopify `updated_at` is coalesced, but a later edit is not blocked by the 1-hour name tombstone.
 
 ### C. Lock & Deduplication Stores (`src/queue/`)
 - **`BaseLockStore` (`base.py`)** & **`BaseDedupStore` (`base.py`)**: Abstract contracts for lock acquisition and key deduplication.
@@ -261,7 +268,7 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
 ### B. GCP Cloud Tasks Queue (`bg-remover-queue`)
 
 - **Purpose:** Acts as a rate-limiting buffer, retry scheduler, and deduplication layer between incoming webhooks and background removal workers.
-- **Deduplication Strategy:** Enqueued using Named Tasks: `task-product-{clean_pid}-{hash}`. Cloud Tasks enforces strict task-name uniqueness, automatically dropping duplicate task enqueue attempts while a task for that product is active/queued.
+- **Deduplication Strategy:** Named Tasks `task-product-{clean_pid}-{pid_hash}-{update_hash}`. Uniqueness coalesces the same `updated_at` (retries / webhook storms). A new Shopify `updated_at` creates a new task name so Cloud Tasks' ~1 hour tombstone does not skip later product edits. Layers 3–4 still no-op cascade webhooks from our own media writes.
 - **Queue Configuration Specification:**
   ```yaml
   name: projects/{PROJECT_ID}/locations/us-central1/queues/bg-remover-queue

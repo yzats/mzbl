@@ -4,7 +4,7 @@ import pytest
 
 from src.queue.memory_stores import InMemoryLockStore, InMemoryDedupStore
 from src.queue.local_dispatcher import LocalTaskDispatcher
-from src.queue.gcp_dispatcher import GCPCloudTasksDispatcher
+from src.queue.gcp_dispatcher import GCPCloudTasksDispatcher, named_task_id
 from src.queue.firestore_stores import GCPFirestoreLockStore, firestore_document_id
 from src.queue.worker import execute_background_removal_job, bg_remover_worker
 
@@ -37,7 +37,8 @@ def test_local_task_dispatcher(mocker):
         shop_domain="test.myshopify.com",
     )
 
-    assert "local-task-12345" in task_id
+    assert "local-task-12345" in task_id.task_id
+    assert task_id.outcome == "enqueued"
     time.sleep(0.1)  # Allow background thread execution
     mock_worker.assert_called_once()
     
@@ -54,12 +55,52 @@ def test_gcp_cloud_tasks_dispatcher_named_task():
     )
     dispatcher.client = None
 
-    task_name = dispatcher.dispatch_product_task(
+    result = dispatcher.dispatch_product_task(
         product_id="gid://shopify/Product/9999",
         shop_domain="test.myshopify.com",
+        metadata={"updated_at": "2026-08-20T06:00:00-04:00"},
     )
 
-    assert "projects/my-gcp-project/locations/us-central1/queues/bg-remover-queue/tasks/task-product-9999" in task_name
+    expected_id = named_task_id(
+        "gid://shopify/Product/9999",
+        {"updated_at": "2026-08-20T06:00:00-04:00"},
+    )
+    assert expected_id in result.task_id
+    assert result.outcome == "simulated"
+    assert "task-product-9999-" in result.task_id
+
+
+def test_gcp_cloud_tasks_dispatcher_logs_deduped_already_exists():
+    dispatcher = GCPCloudTasksDispatcher(
+        project_id="my-gcp-project",
+        location="us-central1",
+        queue_name="bg-remover-queue",
+        worker_target_url="https://example.com/worker",
+    )
+    mock_client = MagicMock()
+    mock_client.create_task.side_effect = Exception("409 ALREADY_EXISTS: task exists")
+    dispatcher.client = mock_client
+    dispatcher.queue_path = "projects/my-gcp-project/locations/us-central1/queues/bg-remover-queue"
+
+    result = dispatcher.dispatch_product_task(
+        product_id="gid://shopify/Product/9999",
+        shop_domain="test.myshopify.com",
+        metadata={"updated_at": "2026-08-20T06:00:00Z"},
+    )
+
+    assert result.outcome == "deduplicated"
+    assert "task-product-9999-" in result.task_id
+
+
+def test_named_task_id_changes_when_product_updated_at_changes():
+    product_id = "gid://shopify/Product/9999"
+    first = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"})
+    second = named_task_id(product_id, {"updated_at": "2026-08-20T07:00:00Z"})
+    retry = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"})
+
+    assert first != second
+    assert first == retry
+    assert first.startswith("task-product-9999-")
 
 
 def test_firestore_document_id_is_path_safe():

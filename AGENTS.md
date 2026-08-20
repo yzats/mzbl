@@ -14,7 +14,7 @@
 
 2. **Layered Anti-Race & Idempotency Strategy:**
    - **Layer 1 (Receiver):** `X-Shopify-Webhook-Id` de-duplication in `InMemoryDedupStore` / `GCPFirestoreDedupStore`.
-   - **Layer 2 (Queue):** Named task creation (`task-product-{product_id_hash}`) in GCP Cloud Tasks.
+   - **Layer 2 (Queue):** Named task `task-product-{id}-{pid_hash}-{update_hash}` in GCP Cloud Tasks (coalesces the same Shopify `updated_at`; does not block later edits).
    - **Layer 3 (Worker Lock):** Distributed product processing lock (`ProductLock(product_id)`) in `InMemoryLockStore` / `GCPFirestoreLockStore`.
    - **Layer 4 (Media Level):** Alt text inspection (`alt="hide"` / `alt="bg-removed"`) skips processed images.
 
@@ -30,7 +30,7 @@
 
 ## 🧪 Testing Requirement
 
-Always verify that all 25 unit tests pass after any change:
+Always verify that all 28 unit tests pass after any change:
 
 ```bash
 PYTHONPATH=shopify-tools/bg-remover:shopify-tools uv run pytest shopify-tools/bg-remover/tests

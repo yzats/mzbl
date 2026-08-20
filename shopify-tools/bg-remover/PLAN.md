@@ -15,7 +15,7 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 - **Pluggable Removers:** Abstract strategy pattern (`BaseBackgroundRemover`) to support hosted `rembg` instances.
 - **Layered Idempotency & Anti-Race Guards:**
   - *Layer 1 (Receiver):* `X-Shopify-Webhook-Id` de-duplication prevents processing duplicate retransmissions (backed by `InMemoryDedupStore` locally, **Cloud Firestore** `webhook_dedup` collection in production).
-  - *Layer 2 (Queue):* Named task creation (`task-product-{product_id_hash}`) in GCP Cloud Tasks drops concurrent duplicate queued tasks for the same product.
+  - *Layer 2 (Queue):* Named task `task-product-{clean_pid}-{pid_hash}-{update_hash}` coalesces the same Shopify `updated_at`; later edits get a new name (Cloud Tasks ~1h tombstone is per-name).
   - *Layer 3 (Worker Lock):* Product processing lock (`ProductLock(product_id)`) prevents concurrent worker race conditions (backed by `InMemoryLockStore` locally, **Cloud Firestore** `product_locks` collection in production).
   - *Layer 4 (Media Level):* Alt text inspection (`alt="hide"` / `alt="bg-removed"`) skips already-processed images.
 - **Resilience:** GCP Cloud Tasks for rate limiting + auto-retry, plus a daily Reconciliation Cron job to catch missed webhooks.
@@ -73,7 +73,7 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 ### Stage 5: Pluggable Task Queue & Local/GCP Worker Pipeline
 - [x] Implement `BaseTaskDispatcher` interface for dispatching lightweight background tasks (`product_id`, `shop_domain`, `topic`).
 - [x] Implement `LocalTaskDispatcher` (background thread execution with `InMemoryLockStore` concurrency guard for local dev/testing).
-- [x] Implement `GCPCloudTasksDispatcher` using Named Tasks (`task-product-{product_id_hash}`) to deduplicate enqueued tasks per product in GCP.
+- [x] Implement `GCPCloudTasksDispatcher` using Named Tasks (`task-product-{clean_pid}-{pid_hash}-{update_hash}`) to coalesce the same product revision without a 1-hour per-product tombstone.
 - [x] Implement provider-agnostic `BaseLockStore` & `BaseDedupStore` interfaces:
   - [x] `InMemoryLockStore` / `InMemoryDedupStore`: In-memory implementation with TTL for local development and testing.
   - [x] `GCPFirestoreLockStore` / `GCPFirestoreDedupStore`: GCP Cloud Firestore backend (`product_locks` and `webhook_dedup` collections with TTL) for production GCP Cloud Functions.

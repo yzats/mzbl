@@ -84,7 +84,9 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
     active_lock_store = get_lock_store()
     lock_key = f"lock:product:{product_id}"
     if not active_lock_store.acquire_lock(lock_key, ttl_seconds=120):
-        logger.info(f"Product lock active for {product_id}. Skipping duplicate worker run.")
+        msg = f"[200 SKIPPED] Product lock active for {product_id}. Skipping duplicate worker run."
+        print(msg, flush=True)
+        logger.warning(msg)
         return {"status": "skipped", "reason": "Product currently processing"}, 200
 
     try:
