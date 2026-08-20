@@ -17,9 +17,10 @@ def verify_shopify_hmac(body_bytes: bytes, hmac_header: str, secret: str) -> boo
     if not hmac_header or not secret or not body_bytes:
         return False
 
+    secret_bytes = secret.strip().encode("utf-8")
     computed_hmac = base64.b64encode(
         hmac.new(
-            secret.encode("utf-8"),
+            secret_bytes,
             body_bytes,
             hashlib.sha256
         ).digest()

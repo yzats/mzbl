@@ -56,12 +56,22 @@ def get_dispatcher():
 
 
 def get_webhook_secret() -> str:
-    """Retrieve Shopify webhook secret key from config module or environment variable."""
+    """Prefer Secret Manager / env vars (production), then local config.py."""
+    env_secret = (
+        os.environ.get("SHOPIFY_WEBHOOK_SECRET", "")
+        or os.environ.get("SHOPIFY_CLIENT_SECRET", "")
+    ).strip()
+    if env_secret:
+        return env_secret
     try:
-        import config
-        return getattr(config, "SHOPIFY_WEBHOOK_SECRET", "") or getattr(config, "SHOPIFY_CLIENT_SECRET", "")
+        import config as shopify_tools_config
     except ImportError:
-        return os.environ.get("SHOPIFY_WEBHOOK_SECRET", "") or os.environ.get("SHOPIFY_CLIENT_SECRET", "")
+        return ""
+    return (
+        getattr(shopify_tools_config, "SHOPIFY_WEBHOOK_SECRET", "")
+        or getattr(shopify_tools_config, "SHOPIFY_CLIENT_SECRET", "")
+        or ""
+    ).strip()
 
 
 @functions_framework.http
@@ -97,7 +107,11 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
         print(f"  [200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}", flush=True)
         return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID"}), 200, {"Content-Type": "application/json"}
 
-    print(f"  HMAC Header: {hmac_header[:10]}... | Secret configured: {'Yes' if client_secret else 'No'}", flush=True)
+    print(
+        f"  HMAC Header present: {'Yes' if hmac_header else 'No'} | "
+        f"Secret length: {len(client_secret)} | Secret configured: {'Yes' if client_secret else 'No'}",
+        flush=True,
+    )
 
     if not verify_shopify_hmac(body_bytes, hmac_header, client_secret):
         print(f"  [401 UNAUTHORIZED] HMAC signature verification failed!", flush=True)

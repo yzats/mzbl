@@ -8,22 +8,27 @@ from flask import Request
 import os
 
 try:
-    import config
-    SHOPIFY_STORE_URL = getattr(config, "SHOPIFY_STORE_URL", "")
-    SHOPIFY_ADMIN_API_ACCESS_TOKEN = getattr(config, "SHOPIFY_ADMIN_API_ACCESS_TOKEN", "")
-    SHOPIFY_API_VERSION = getattr(config, "SHOPIFY_API_VERSION", "2024-04")
-    REMBG_API_URL = getattr(config, "REMBG_API_URL", "https://api.rembg.com/rmbg")
-    REMBG_API_KEY = getattr(config, "REMBG_API_KEY", "")
-    DEFAULT_BG_COLOR = getattr(config, "DEFAULT_BG_COLOR", "#ffffff")
-    DELETE_ORIGINAL = getattr(config, "DELETE_ORIGINAL", False)
+    import config as _app_config
 except ImportError:
-    SHOPIFY_STORE_URL = os.environ.get("SHOPIFY_STORE_URL", "")
-    SHOPIFY_ADMIN_API_ACCESS_TOKEN = os.environ.get("SHOPIFY_ADMIN_API_ACCESS_TOKEN", "")
-    SHOPIFY_API_VERSION = os.environ.get("SHOPIFY_API_VERSION", "2024-04")
-    REMBG_API_URL = os.environ.get("REMBG_API_URL", "https://api.rembg.com/rmbg")
-    REMBG_API_KEY = os.environ.get("REMBG_API_KEY", "")
-    DEFAULT_BG_COLOR = os.environ.get("DEFAULT_BG_COLOR", "#ffffff")
-    DELETE_ORIGINAL = os.environ.get("DELETE_ORIGINAL", "false").lower() == "true"
+    _app_config = None
+
+
+def _setting(name: str, default: str = "") -> str:
+    env_val = os.environ.get(name)
+    if env_val is not None and str(env_val).strip() != "":
+        return str(env_val).strip()
+    if _app_config is not None:
+        return str(getattr(_app_config, name, default) or default)
+    return default
+
+
+SHOPIFY_STORE_URL = _setting("SHOPIFY_STORE_URL")
+SHOPIFY_ADMIN_API_ACCESS_TOKEN = _setting("SHOPIFY_ADMIN_API_ACCESS_TOKEN")
+SHOPIFY_API_VERSION = _setting("SHOPIFY_API_VERSION", "2024-04")
+REMBG_API_URL = _setting("REMBG_API_URL", "https://api.rembg.com/rmbg")
+REMBG_API_KEY = _setting("REMBG_API_KEY")
+DEFAULT_BG_COLOR = _setting("DEFAULT_BG_COLOR", "#ffffff")
+DELETE_ORIGINAL = _setting("DELETE_ORIGINAL", "false").lower() == "true"
 
 from src.shopify import ShopifyGraphQLClient, ShopifyAPIError
 from src.removers import RembgHostedRemover, BackgroundRemoverError, RetryableBackgroundRemoverError

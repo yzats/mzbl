@@ -16,7 +16,7 @@ def test_verify_shopify_hmac_valid():
         hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
     ).decode("utf-8")
 
-    assert verify_shopify_hmac(body, valid_hmac, secret) is True
+    assert verify_shopify_hmac(body, valid_hmac, " my_secret_key \n") is True
 
 
 def test_verify_shopify_hmac_invalid():
@@ -27,6 +27,13 @@ def test_verify_shopify_hmac_invalid():
     assert verify_shopify_hmac(body, bad_hmac, secret) is False
     assert verify_shopify_hmac(body, "", secret) is False
     assert verify_shopify_hmac(b"", bad_hmac, secret) is False
+
+
+def test_get_webhook_secret_prefers_env(monkeypatch):
+    monkeypatch.setenv("SHOPIFY_WEBHOOK_SECRET", " env-secret-value ")
+    from src.webhooks.receiver import get_webhook_secret
+
+    assert get_webhook_secret() == "env-secret-value"
 
 
 def test_shopify_webhook_receiver_unauthorized(mocker):
