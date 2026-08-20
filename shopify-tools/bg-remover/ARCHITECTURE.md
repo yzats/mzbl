@@ -433,6 +433,18 @@ terraform init
 terraform apply
 ```
 
+Terraform enables these project APIs (GitHub Actions does not):
+- `cloudfunctions.googleapis.com`
+- `run.googleapis.com`
+- `cloudbuild.googleapis.com`
+- `artifactregistry.googleapis.com`
+- `cloudresourcemanager.googleapis.com`
+- `storage.googleapis.com`
+- `cloudtasks.googleapis.com`
+- `firestore.googleapis.com`
+- `secretmanager.googleapis.com`
+- `iam.googleapis.com`
+
 #### 2. How GitHub Secrets & Service Accounts are Automated
 Terraform creates a GCP Service Account (`github-deployer`) used only by GitHub Actions to deploy Cloud Functions. It generates a private JSON key (`google_service_account_key`) and writes `GCP_PROJECT_ID` and `GCP_SA_KEY` into the `yzats/mzbl` GitHub repository via `github_actions_secret`.
 

@@ -5,6 +5,9 @@
 # ==============================================================================
 set -euo pipefail
 
+# Never prompt to enable APIs in CI (gcloud would hang on y/N).
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1
+
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-your-gcp-project-id}"
 GCP_REGION="${GCP_REGION:-us-central1}"
 QUEUE_NAME="${QUEUE_NAME:-bg-remover-queue}"

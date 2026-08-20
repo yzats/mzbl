@@ -7,6 +7,7 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: 'us-central1'
   QUEUE_NAME: 'bg-remover-queue'
+  CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
 
 jobs:
   deploy:
