@@ -159,6 +159,12 @@ resource "google_project_iam_member" "sa_cloudtasks_enforcer" {
   member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
 }
 
+resource "google_project_iam_member" "sa_cloudtasks_enqueuer" {
+  project = var.gcp_project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
+}
+
 resource "google_secret_manager_secret_iam_member" "webhook_secret_access" {
   secret_id = google_secret_manager_secret.shopify_webhook_secret.id
   role      = "roles/secretmanager.secretAccessor"
@@ -199,6 +205,65 @@ resource "google_project_iam_member" "deployer_cloudtasks_admin" {
   project = var.gcp_project_id
   role    = "roles/cloudtasks.admin"
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+# Gen2 Cloud Functions deploy via Cloud Build + Cloud Run + Artifact Registry.
+resource "google_project_iam_member" "deployer_run_admin" {
+  project = var.gcp_project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_cloudbuild_builder" {
+  project = var.gcp_project_id
+  role    = "roles/cloudbuild.builds.builder"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_artifactregistry_writer" {
+  project = var.gcp_project_id
+  role    = "roles/artifactregistry.writer"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_storage_object_admin" {
+  project = var.gcp_project_id
+  role    = "roles/storage.objectAdmin"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_log_writer" {
+  project = var.gcp_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_secret_accessor" {
+  project = var.gcp_project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_secret_viewer" {
+  project = var.gcp_project_id
+  role    = "roles/secretmanager.viewer"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+data "google_project" "current" {
+  project_id = var.gcp_project_id
+}
+
+resource "google_service_account_iam_member" "cloudtasks_token_creator" {
+  service_account_id = google_service_account.bg_remover_sa.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+}
+
+resource "google_service_account_iam_member" "gcf_robot_build_sa_user" {
+  service_account_id = google_service_account.github_deployer.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${data.google_project.current.number}@gcf-admin-robot.iam.gserviceaccount.com"
 }
 
 resource "google_service_account_key" "github_deployer_key" {

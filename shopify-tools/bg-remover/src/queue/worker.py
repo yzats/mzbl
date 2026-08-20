@@ -5,6 +5,8 @@ from typing import Any, Tuple, Dict, Optional
 import functions_framework
 from flask import Request
 
+import os
+
 try:
     import config
     SHOPIFY_STORE_URL = getattr(config, "SHOPIFY_STORE_URL", "")
@@ -15,7 +17,6 @@ try:
     DEFAULT_BG_COLOR = getattr(config, "DEFAULT_BG_COLOR", "#ffffff")
     DELETE_ORIGINAL = getattr(config, "DELETE_ORIGINAL", False)
 except ImportError:
-    import os
     SHOPIFY_STORE_URL = os.environ.get("SHOPIFY_STORE_URL", "")
     SHOPIFY_ADMIN_API_ACCESS_TOKEN = os.environ.get("SHOPIFY_ADMIN_API_ACCESS_TOKEN", "")
     SHOPIFY_API_VERSION = os.environ.get("SHOPIFY_API_VERSION", "2024-04")
@@ -33,6 +34,19 @@ logger = logging.getLogger(__name__)
 
 # Global Product Lock Store for Worker
 lock_store = InMemoryLockStore()
+_gcp_lock_store = None
+
+
+def get_lock_store():
+    """Return Firestore lock store in GCP, or the in-memory store locally."""
+    global _gcp_lock_store
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    if not project_id:
+        return lock_store
+    if _gcp_lock_store is None:
+        from src.queue.firestore_stores import GCPFirestoreLockStore
+        _gcp_lock_store = GCPFirestoreLockStore(project_id=project_id)
+    return _gcp_lock_store
 
 
 def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
@@ -62,8 +76,9 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
     )
     remover = RembgHostedRemover(api_key=REMBG_API_KEY, api_url=REMBG_API_URL)
 
+    active_lock_store = get_lock_store()
     lock_key = f"lock:product:{product_id}"
-    if not lock_store.acquire_lock(lock_key, ttl_seconds=120):
+    if not active_lock_store.acquire_lock(lock_key, ttl_seconds=120):
         logger.info(f"Product lock active for {product_id}. Skipping duplicate worker run.")
         return {"status": "skipped", "reason": "Product currently processing"}, 200
 
@@ -98,7 +113,7 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
         return {"status": "error", "message": str(e)}, 400
 
     finally:
-        lock_store.release_lock(lock_key)
+        active_lock_store.release_lock(lock_key)
 
 
 @functions_framework.http

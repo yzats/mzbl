@@ -5,3 +5,5 @@ pillow>=10.0.0
 python-dotenv>=1.0.0
 functions-framework>=3.8.0
 flask>=3.0.0
+google-cloud-tasks>=2.16.0
+google-cloud-firestore>=2.16.0

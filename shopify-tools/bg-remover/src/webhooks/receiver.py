@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import logging
@@ -16,6 +17,42 @@ logger = logging.getLogger(__name__)
 # Global instances for local/default setup
 deduplicator = InMemoryDedupStore()
 dispatcher = LocalTaskDispatcher(worker_func=execute_background_removal_job)
+_gcp_deduplicator = None
+_gcp_dispatcher = None
+
+
+def _gcp_project_id() -> str:
+    return os.environ.get("GCP_PROJECT_ID", "")
+
+
+def get_deduplicator():
+    """Return Firestore dedup in GCP, or the in-memory store locally."""
+    global _gcp_deduplicator
+    project_id = _gcp_project_id()
+    if not project_id:
+        return deduplicator
+    if _gcp_deduplicator is None:
+        from src.queue.firestore_stores import GCPFirestoreDedupStore
+        _gcp_deduplicator = GCPFirestoreDedupStore(project_id=project_id)
+    return _gcp_deduplicator
+
+
+def get_dispatcher():
+    """Return Cloud Tasks dispatcher in GCP, or the local thread dispatcher."""
+    global _gcp_dispatcher
+    project_id = _gcp_project_id()
+    if not project_id:
+        return dispatcher
+    if _gcp_dispatcher is None:
+        from src.queue.gcp_dispatcher import GCPCloudTasksDispatcher
+        _gcp_dispatcher = GCPCloudTasksDispatcher(
+            project_id=project_id,
+            location=os.environ.get("GCP_REGION", "us-central1"),
+            queue_name=os.environ.get("QUEUE_NAME", "bg-remover-queue"),
+            worker_target_url=os.environ.get("WORKER_TARGET_URL", ""),
+            service_account_email=os.environ.get("FUNCTION_RUNTIME_SA", ""),
+        )
+    return _gcp_dispatcher
 
 
 def get_webhook_secret() -> str:
@@ -24,7 +61,6 @@ def get_webhook_secret() -> str:
         import config
         return getattr(config, "SHOPIFY_WEBHOOK_SECRET", "") or getattr(config, "SHOPIFY_CLIENT_SECRET", "")
     except ImportError:
-        import os
         return os.environ.get("SHOPIFY_WEBHOOK_SECRET", "") or os.environ.get("SHOPIFY_CLIENT_SECRET", "")
 
 
@@ -57,7 +93,7 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
     print(f"  Webhook ID: {webhook_id} | Topic: {topic_header} | Shop: {shop_header}", flush=True)
 
     # Check for duplicate Webhook ID
-    if webhook_id and deduplicator.is_duplicate(webhook_id, ttl_seconds=300):
+    if webhook_id and get_deduplicator().is_duplicate(webhook_id, ttl_seconds=300):
         print(f"  [200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}", flush=True)
         return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID"}), 200, {"Content-Type": "application/json"}
 
@@ -87,7 +123,7 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
         gql_product_id = str(product_id)
 
     # Dispatch background worker task asynchronously
-    task_id = dispatcher.dispatch_product_task(
+    task_id = get_dispatcher().dispatch_product_task(
         product_id=gql_product_id,
         shop_domain=shop_header,
         topic=topic_header,

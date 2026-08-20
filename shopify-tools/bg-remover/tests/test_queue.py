@@ -51,6 +51,7 @@ def test_gcp_cloud_tasks_dispatcher_named_task():
         queue_name="bg-remover-queue",
         worker_target_url="https://us-central1-my-gcp-project.cloudfunctions.net/bg_remover_worker",
     )
+    dispatcher.client = None
 
     task_name = dispatcher.dispatch_product_task(
         product_id="gid://shopify/Product/9999",

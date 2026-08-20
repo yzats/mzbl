@@ -115,7 +115,7 @@ Deployments are strictly **manual** and separate from automated testing.
 2. Click **Deploy Shopify Background Remover to GCP** on the left sidebar.
 3. Click **Run workflow** dropdown $\rightarrow$ Select `main` branch $\rightarrow$ Click **Run workflow**.
 
-The workflow runs `shopify-tools/bg-remover/deploy_gcp.sh` to build and deploy `shopify_webhook_receiver` and `bg_remover_worker` v2 Cloud Functions on GCP.
+The workflow runs `shopify-tools/bg-remover/deploy_gcp.sh` to deploy `shopify_webhook_receiver` and `bg_remover_worker` v2 Cloud Functions. Infrastructure (APIs, queues, IAM, secrets) must already exist from `terraform apply`. After changing Terraform IAM, run `terraform apply` locally **before** re-running the GitHub Actions deploy workflow.
 
 ---
 

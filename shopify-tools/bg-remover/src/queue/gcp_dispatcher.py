@@ -39,7 +39,7 @@ class GCPCloudTasksDispatcher(BaseTaskDispatcher):
             from google.cloud import tasks_v2
             self.client = tasks_v2.CloudTasksClient()
             self.queue_path = self.client.queue_path(project_id, location, queue_name)
-        except ImportError:
+        except Exception:
             self.client = None
             self.queue_path = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
 

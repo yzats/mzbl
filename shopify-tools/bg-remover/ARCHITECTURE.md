@@ -253,8 +253,8 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
 
 | Function Name | Trigger Type | Runtime | Memory / CPU | Concurrency | Timeout | IAM Roles & Secret Access |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `shopify_webhook_receiver` | HTTP POST | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 80 | 10 seconds | `roles/cloudtasks.enforcer`, access to `SHOPIFY_WEBHOOK_SECRET` |
-| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, access to `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY` |
+| `shopify_webhook_receiver` | HTTP POST | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 80 | 10 seconds | `roles/cloudtasks.enqueuer`, access to `SHOPIFY_WEBHOOK_SECRET` |
+| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, `roles/cloudtasks.taskRunner`, access to `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY` |
 
 ---
 
@@ -328,7 +328,7 @@ shopify-tools/
     ├── PLAN.md                          # Milestone tracking plan
     ├── ARCHITECTURE.md                  # System architecture & design specification
     ├── process_product.py               # CLI tool & process_product_batch execution core
-    ├── main.py                          # CLI runner for testing rembg API on local files
+    ├── main.py                          # CLI runner + Cloud Functions --entry-point exports
     ├── requirements.txt                 # Project dependencies
     ├── src/
     │   ├── removers/
@@ -404,9 +404,10 @@ Deployment and infrastructure management are strictly separated into a **2-Phase
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │ PHASE 2: APPLICATION CODE DEPLOYMENT (GitHub Actions — Manual On-Demand)        │
 │                                                                                 │
-│   GitHub Actions ──(deploy_gcp.sh)──> Deploys Application Code & Containers:    │
-│                                       ├── Receiver Cloud Function (receiver.py) │
-│                                       └── Worker Cloud Function (worker.py)     │
+│   GitHub Actions ──(deploy_gcp.sh)──> Deploys Cloud Functions only:             │
+│                                       ├── Worker Cloud Function (worker.py)     │
+│                                       └── Receiver Cloud Function (receiver.py) │
+│   The script does NOT enable APIs, create service accounts, or create queues.   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -433,7 +434,26 @@ terraform apply
 ```
 
 #### 2. How GitHub Secrets & Service Accounts are Automated
-Terraform creates a GCP Service Account (`github-deployer`) with permissions to deploy Cloud Functions, Cloud Tasks, and Secrets. It generates a private JSON key (`google_service_account_key`) and automatically writes `GCP_PROJECT_ID` and `GCP_SA_KEY` secrets into the `yzats/mzbl` GitHub repository via `github_actions_secret`.
+Terraform creates a GCP Service Account (`github-deployer`) used only by GitHub Actions to deploy Cloud Functions. It generates a private JSON key (`google_service_account_key`) and writes `GCP_PROJECT_ID` and `GCP_SA_KEY` into the `yzats/mzbl` GitHub repository via `github_actions_secret`.
+
+`github-deployer` IAM (deploy-only; APIs are enabled by Terraform, not by the deploy script):
+- `roles/cloudfunctions.developer`
+- `roles/run.admin`
+- `roles/cloudbuild.builds.builder`
+- `roles/artifactregistry.writer`
+- `roles/storage.objectAdmin`
+- `roles/logging.logWriter`
+- `roles/iam.serviceAccountUser`
+- `roles/cloudtasks.admin` (describe/verify the queue)
+- `roles/secretmanager.viewer` / `roles/secretmanager.secretAccessor` (bind Secret Manager secrets to functions)
+
+Runtime service account `bg-remover-sa` IAM:
+- `roles/datastore.user`
+- `roles/cloudtasks.enqueuer`
+- `roles/cloudtasks.taskRunner`
+- Secret accessor on `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY`
+
+The Cloud Tasks service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com`) gets `roles/iam.serviceAccountTokenCreator` on `bg-remover-sa` so OIDC-authenticated worker invocations succeed.
 
 #### 3. Token Refresh / Expiration Behavior
 - The `GITHUB_TOKEN` PAT is **ONLY used locally when running `terraform apply`**.
@@ -456,7 +476,7 @@ To protect this monorepo, testing is automated while deployment is strictly **ma
   1. Go to GitHub $\rightarrow$ **Actions** tab.
   2. Select **Deploy Shopify Background Remover to GCP** on the left.
   3. Click **Run workflow** $\rightarrow$ select branch `main` $\rightarrow$ click **Run workflow**.
-- **Action:** Authenticates via `GCP_SA_KEY` secret and executes `shopify-tools/bg-remover/deploy_gcp.sh` to package code and update Cloud Functions.
+- **Action:** Authenticates via `GCP_SA_KEY` secret and executes `shopify-tools/bg-remover/deploy_gcp.sh`. That script verifies Terraform-managed resources exist, then deploys `bg_remover_worker` and `shopify_webhook_receiver` (entrypoints re-exported from `bg-remover/main.py`). It prints `Webhook Receiver Endpoint` for Shopify Admin. It does **not** call `gcloud services enable`.
 
 ---
 
