@@ -113,7 +113,7 @@ All major subsystems use abstract interfaces to support provider swapping (e.g. 
 ### C. Lock & Deduplication Stores (`src/queue/`)
 - **`BaseLockStore` (`base.py`)** & **`BaseDedupStore` (`base.py`)**: Abstract contracts for lock acquisition and key deduplication.
 - **`InMemoryLockStore` & `InMemoryDedupStore` (`memory_stores.py`)**: In-memory dict-based stores with TTL expiration for local development.
-- **`GCPFirestoreLockStore` & `GCPFirestoreDedupStore` (`firestore_stores.py`)**: GCP Cloud Firestore implementations (`product_locks` and `webhook_dedup` collections) with TTL policy support for multi-instance production deployments.
+- **`GCPFirestoreLockStore` & `GCPFirestoreDedupStore` (`firestore_stores.py`)**: GCP Cloud Firestore implementations (`product_locks` and `webhook_dedup` collections) with TTL policy support. Document IDs are `firestore_document_id(key)` (SHA-256 hex) because Shopify GIDs contain `/`.
 
 ---
 
@@ -284,12 +284,12 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
 - **Database Mode:** Native Mode.
 - **Collections Specification:**
   1. **`webhook_dedup` Collection:**
-     - **Document ID:** `X-Shopify-Webhook-Id` value.
-     - **Fields:** `key` (string), `created_at` (timestamp), `expires_at` (timestamp, set to `now + 300s`).
+     - **Document ID:** SHA-256 hex of the `X-Shopify-Webhook-Id` value (Firestore IDs cannot contain `/`).
+     - **Fields:** `key` (original webhook id string), `created_at` (number, unix seconds), `expires_at` (number, unix seconds, set to `now + 300s`).
      - **TTL Policy:** Enabled on `expires_at` field to auto-delete expired webhook records.
   2. **`product_locks` Collection:**
-     - **Document ID:** `lock:product:{product_id}`.
-     - **Fields:** `lock_key` (string), `created_at` (timestamp), `expires_at` (timestamp, set to `now + 120s`).
+     - **Document ID:** SHA-256 hex of `lock:product:{product_id}` (product_id is a Shopify GID containing `/`, which is illegal in a raw document name).
+     - **Fields:** `lock_key` (original lock string), `created_at` (number, unix seconds), `expires_at` (number, unix seconds, set to `now + 120s`).
      - **TTL Policy:** Enabled on `expires_at` field for automatic lock auto-release on crashed workers.
 
 ---

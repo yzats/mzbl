@@ -5,6 +5,7 @@ import pytest
 from src.queue.memory_stores import InMemoryLockStore, InMemoryDedupStore
 from src.queue.local_dispatcher import LocalTaskDispatcher
 from src.queue.gcp_dispatcher import GCPCloudTasksDispatcher
+from src.queue.firestore_stores import GCPFirestoreLockStore, firestore_document_id
 from src.queue.worker import execute_background_removal_job, bg_remover_worker
 
 
@@ -59,6 +60,31 @@ def test_gcp_cloud_tasks_dispatcher_named_task():
     )
 
     assert "projects/my-gcp-project/locations/us-central1/queues/bg-remover-queue/tasks/task-product-9999" in task_name
+
+
+def test_firestore_document_id_is_path_safe():
+    lock_key = "lock:product:gid://shopify/Product/788032119674292922"
+    doc_id = firestore_document_id(lock_key)
+    assert "/" not in doc_id
+    assert ":" not in doc_id
+    assert len(doc_id) == 64
+    assert firestore_document_id(lock_key) == doc_id
+
+
+def test_firestore_lock_store_uses_hashed_document_id():
+    store = GCPFirestoreLockStore()
+    mock_db = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.exists = False
+    mock_db.collection.return_value.document.return_value.get.return_value = mock_doc
+    store.db = mock_db
+
+    lock_key = "lock:product:gid://shopify/Product/123"
+    assert store.acquire_lock(lock_key, ttl_seconds=10) is True
+
+    called_id = mock_db.collection.return_value.document.call_args[0][0]
+    assert called_id == firestore_document_id(lock_key)
+    assert "/" not in called_id
 
 
 def test_worker_execute_no_images(mocker):

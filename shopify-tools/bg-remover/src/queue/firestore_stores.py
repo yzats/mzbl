@@ -1,8 +1,20 @@
+import hashlib
 import logging
 from typing import Optional, Any
 from .base import BaseLockStore, BaseDedupStore
 
 logger = logging.getLogger(__name__)
+
+
+def firestore_document_id(key: str) -> str:
+    """Return a Firestore-safe document ID.
+
+    Firestore treats ``/`` as a path separator, so GraphQL GIDs like
+    ``gid://shopify/Product/123`` cannot be used as document names.
+    SHA-256 hex is stable, unique, and always a valid ID. The original
+    key is stored in document fields (``lock_key`` / ``key``).
+    """
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
 class GCPFirestoreLockStore(BaseLockStore):
@@ -24,7 +36,7 @@ class GCPFirestoreLockStore(BaseLockStore):
             return True
 
         import time
-        doc_ref = self.db.collection(self.collection_name).document(lock_key)
+        doc_ref = self.db.collection(self.collection_name).document(firestore_document_id(lock_key))
         now = time.time()
 
         try:
@@ -51,7 +63,7 @@ class GCPFirestoreLockStore(BaseLockStore):
             return
 
         try:
-            self.db.collection(self.collection_name).document(lock_key).delete()
+            self.db.collection(self.collection_name).document(firestore_document_id(lock_key)).delete()
         except Exception as e:
             logger.error(f"Firestore release_lock error for {lock_key}: {e}")
 
@@ -75,7 +87,7 @@ class GCPFirestoreDedupStore(BaseDedupStore):
             return False
 
         import time
-        doc_ref = self.db.collection(self.collection_name).document(key)
+        doc_ref = self.db.collection(self.collection_name).document(firestore_document_id(key))
         now = time.time()
 
         try:
