@@ -18,3 +18,13 @@ output "bg_remover_dashboard_id" {
   value       = google_monitoring_dashboard.bg_remover.id
   description = "Cloud Monitoring dashboard resource name (projects/.../dashboards/...)"
 }
+
+output "circuit_email_channel_id" {
+  value       = try(google_monitoring_notification_channel.circuit_email[0].name, "")
+  description = "Monitoring email notification channel (empty if alert_email unset)"
+}
+
+output "circuit_sms_channel_id" {
+  value       = try(google_monitoring_notification_channel.circuit_sms[0].name, "")
+  description = "Monitoring SMS notification channel (empty if alert_sms unset)"
+}

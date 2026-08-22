@@ -1,10 +1,9 @@
 """Pause / resume the product Cloud Tasks queue (rembg circuit breaker)."""
 
-import logging
 import os
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from src.utils import applog
 
 CIRCUIT_OPEN_LOG = "[CIRCUIT OPEN]"
 CIRCUIT_STILL_OPEN_LOG = "[CIRCUIT STILL OPEN]"
@@ -12,8 +11,11 @@ CIRCUIT_CLOSED_LOG = "[CIRCUIT CLOSED]"
 
 
 def emit_circuit_log(msg: str) -> None:
-    """One stdout line for Cloud Logging. Do not also logger.* the same string."""
-    print(msg, flush=True)
+    """One structured line. OPEN/STILL OPEN are WARNING; CLOSED is INFO."""
+    if msg.startswith(CIRCUIT_CLOSED_LOG):
+        applog.info(msg)
+    else:
+        applog.warning(msg)
 
 
 def _queue_client_and_path():
@@ -28,7 +30,7 @@ def _queue_client_and_path():
         queue_path = client.queue_path(project_id, location, queue_name)
         return client, queue_path
     except Exception as e:
-        logger.warning("Cloud Tasks client unavailable for circuit control: %s", e)
+        applog.warning(f"Cloud Tasks client unavailable for circuit control: {e}")
         return None, ""
 
 
@@ -66,13 +68,13 @@ def resume_product_queue() -> bool:
     try:
         queue = client.get_queue(name=queue_path)
         if queue.state == Queue.State.RUNNING:
-            logger.info("Queue already running: %s", queue_path)
+            applog.info(f"Queue already running: {queue_path}")
             return False
         client.resume_queue(name=queue_path)
         emit_circuit_log(f"{CIRCUIT_CLOSED_LOG} resumed {queue_path}")
         return True
     except Exception as e:
-        logger.error("Failed to resume queue %s: %s", queue_path, e)
+        applog.error(f"Failed to resume queue {queue_path}: {e}")
         return False
 
 
@@ -87,5 +89,5 @@ def is_product_queue_paused() -> Optional[bool]:
         queue = client.get_queue(name=queue_path)
         return queue.state == Queue.State.PAUSED
     except Exception as e:
-        logger.warning("Could not read queue state: %s", e)
+        applog.warning(f"Could not read queue state: {e}")
         return None

@@ -1,6 +1,4 @@
-import sys
 import json
-import logging
 from typing import Any, Tuple, Dict, Optional
 import functions_framework
 from flask import Request
@@ -40,9 +38,7 @@ from src.removers import (
 from src.queue.custom_metrics import increment_images_processed
 from src.queue.memory_stores import InMemoryLockStore
 from src.queue.queue_control import pause_product_queue
-
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-logger = logging.getLogger(__name__)
+from src.utils import applog
 
 # Global Product Lock Store for Worker
 lock_store = InMemoryLockStore()
@@ -78,7 +74,7 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
     token = SHOPIFY_ADMIN_API_ACCESS_TOKEN
 
     if not shop_url or not token:
-        logger.error("Missing Shopify credentials for background removal worker job.")
+        applog.error("Missing Shopify credentials for background removal worker job.")
         return {"status": "error", "message": "Shopify API credentials missing"}, 500
 
     shopify_client = ShopifyGraphQLClient(
@@ -91,20 +87,19 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
     active_lock_store = get_lock_store()
     lock_key = f"lock:product:{product_id}"
     if not active_lock_store.acquire_lock(lock_key, ttl_seconds=120):
-        msg = f"[200 SKIPPED] Product lock active for {product_id}. Skipping duplicate worker run."
-        print(msg, flush=True)
-        logger.warning(msg)
+        applog.info(
+            f"[200 SKIPPED] Product lock active for {product_id}. Skipping duplicate worker run."
+        )
         return {"status": "skipped", "reason": "Product currently processing"}, 200
 
     try:
-        logger.info(f"Worker starting background removal process for Product ID: {product_id}")
         unprocessed_images = shopify_client.get_unprocessed_images(product_id)
 
         if not unprocessed_images:
-            logger.info(f"No unprocessed images found for Product ID: {product_id}. Completed.")
+            applog.info(f"No unprocessed images for {product_id}")
             return {"status": "success", "processed_count": 0, "message": "No unprocessed images"}, 200
 
-        logger.info(f"Found {len(unprocessed_images)} image(s) to process on product {product_id}.")
+        applog.info(f"Processing {len(unprocessed_images)} image(s) on {product_id}")
 
         from process_product import process_product_batch
 
@@ -117,17 +112,19 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
             delete_original=DELETE_ORIGINAL,
         )
 
-        logger.info(f"Successfully processed {processed_count} image(s) for product {product_id}.")
+        applog.info(f"Processed {processed_count} image(s) for {product_id}")
         increment_images_processed(processed_count)
         return {"status": "success", "processed_count": processed_count}, 200
 
     except (ShopifyAPIError, BackgroundRemoverError) as e:
-        logger.error(f"Error processing background removal for product {product_id}: {e}")
         if isinstance(e, (RembgUnavailableError, RetryableBackgroundRemoverError)):
+            applog.warning(f"Rembg unavailable for {product_id}: {e}")
             pause_product_queue(str(e))
             return {"status": "error", "circuit": "open", "message": str(e)}, 503
         if isinstance(e, RetryableShopifyError):
+            applog.warning(f"Retryable Shopify error for {product_id}: {e}")
             return {"status": "error", "message": str(e)}, 503
+        applog.error(f"Non-retryable error for {product_id}: {e}")
         return {"status": "error", "message": str(e)}, 400
 
     finally:

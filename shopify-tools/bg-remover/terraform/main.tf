@@ -101,7 +101,7 @@ resource "google_cloud_tasks_queue" "bg_remover_queue" {
   }
 
   retry_config {
-    max_attempts  = 5
+    max_attempts  = -1
     min_backoff   = "5s"
     max_backoff   = "300s"
     max_doublings = 3
@@ -387,7 +387,7 @@ resource "google_monitoring_alert_policy" "circuit_open" {
   conditions {
     display_name = "Circuit open/still-open logs in the last 5 minutes"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/bg_remover_circuit_open\""
+      filter          = "metric.type=\"logging.googleapis.com/user/bg_remover_circuit_open\" AND resource.type=\"cloud_run_revision\""
       duration        = "0s"
       comparison      = "COMPARISON_GT"
       threshold_value = 0
@@ -398,9 +398,10 @@ resource "google_monitoring_alert_policy" "circuit_open" {
     }
   }
 
+  # Metric alerts notify on open and close by default. notification_prompts
+  # needs google provider >= 6.14; this module is pinned to ~> 5.0.
   alert_strategy {
-    auto_close           = "1800s"
-    notification_prompts = ["OPENED", "CLOSED"]
+    auto_close = "1800s"
   }
 
   notification_channels = concat(

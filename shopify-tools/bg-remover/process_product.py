@@ -35,6 +35,7 @@ from src.removers import (
     RetryableBackgroundRemoverError,
     RembgUnavailableError,
 )
+from src.utils import applog
 
 
 def process_product_batch(
@@ -55,9 +56,6 @@ def process_product_batch(
     if not unprocessed_images:
         return 0
 
-    product_title = unprocessed_images[0].get("product_title", "Product")
-    print(f"\n--- Batch processing {len(unprocessed_images)} image(s) for Product: '{product_title}' ({product_id}) ---")
-
     # Step 1: Process images and perform staged uploads
     prepared_items = []
     failed_images = []
@@ -70,7 +68,6 @@ def process_product_batch(
         upload_filename = f"{clean_id}-bg-removed.png"
 
         try:
-            print(f"  1. [Download & rembg] Processing media ID: {media_id} (position {pos})...")
             orig_bytes = shopify_client.download_image_bytes(original_url)
             processed_bytes = remover.remove_background(orig_bytes, bg_color=bg_color)
 
@@ -87,12 +84,10 @@ def process_product_batch(
                 "target_position": pos,
                 "resource_url": resource_url,
             })
-            print(f"     Staged URL ready for media ID: {media_id}")
-
         except (RetryableBackgroundRemoverError, RembgUnavailableError):
             raise
         except Exception as e:
-            print(f"  ⚠️ Error processing media ID {media_id}: {e}")
+            applog.warning(f"Skipping media {media_id}: {e}")
             failed_images.append((img_info, e))
 
     if not prepared_items:
@@ -101,7 +96,6 @@ def process_product_batch(
         return 0
 
     # Step 2: Batched productCreateMedia
-    print(f"\n  2. [Batch GraphQL] Creating {len(prepared_items)} new product media items...")
     create_payload = [
         {"originalSource": item["resource_url"], "alt": "bg-removed"}
         for item in prepared_items
@@ -136,17 +130,13 @@ def process_product_batch(
                 })
 
     if moves:
-        print(f"  3. [Batch GraphQL] Reordering {len(moves)} media item(s)...")
         shopify_client.reorder_product_media(product_id=product_id, moves=moves)
 
     if original_deletes:
-        print(f"  4. [Batch GraphQL] Deleting {len(original_deletes)} original media item(s)...")
         shopify_client.delete_product_media(product_id=product_id, media_ids=original_deletes)
     elif original_updates:
-        print(f"  4. [Batch GraphQL] Updating alt='hide' for {len(original_updates)} original media item(s)...")
         shopify_client.update_product_media_batch(product_id=product_id, updates=original_updates)
 
-    print(f"✨ Successfully batch-processed {len(prepared_items)} image(s) for product {product_id}.")
     return len(prepared_items)
 
 

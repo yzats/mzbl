@@ -1,9 +1,7 @@
 import hashlib
-import logging
 from typing import Optional, Any
+from src.utils import applog
 from .base import BaseLockStore, BaseDedupStore
-
-logger = logging.getLogger(__name__)
 
 
 def firestore_document_id(key: str) -> str:
@@ -29,7 +27,7 @@ class GCPFirestoreLockStore(BaseLockStore):
             self.db = firestore.Client(project=project_id)
         except Exception as e:
             self.db = None
-            logger.warning("FirestoreLockStore client unavailable (%s); operating in mock mode.", e)
+            applog.warning(f"FirestoreLockStore client unavailable ({e}); operating in mock mode.")
 
     def acquire_lock(self, lock_key: str, ttl_seconds: int = 120) -> bool:
         if not self.db:
@@ -55,7 +53,7 @@ class GCPFirestoreLockStore(BaseLockStore):
             })
             return True
         except Exception as e:
-            logger.error(f"Firestore acquire_lock error for {lock_key}: {e}")
+            applog.warning(f"Firestore acquire_lock error for {lock_key}: {e}")
             return True  # Fail open to allow worker execution if Firestore has transient issues
 
     def release_lock(self, lock_key: str) -> None:
@@ -65,7 +63,7 @@ class GCPFirestoreLockStore(BaseLockStore):
         try:
             self.db.collection(self.collection_name).document(firestore_document_id(lock_key)).delete()
         except Exception as e:
-            logger.error(f"Firestore release_lock error for {lock_key}: {e}")
+            applog.warning(f"Firestore release_lock error for {lock_key}: {e}")
 
 
 class GCPFirestoreDedupStore(BaseDedupStore):
@@ -80,7 +78,7 @@ class GCPFirestoreDedupStore(BaseDedupStore):
             self.db = firestore.Client(project=project_id)
         except Exception as e:
             self.db = None
-            logger.warning("FirestoreDedupStore client unavailable (%s); operating in mock mode.", e)
+            applog.warning(f"FirestoreDedupStore client unavailable ({e}); operating in mock mode.")
 
     def is_duplicate(self, key: str, ttl_seconds: int = 300) -> bool:
         if not key or not self.db:
@@ -106,5 +104,5 @@ class GCPFirestoreDedupStore(BaseDedupStore):
             })
             return False
         except Exception as e:
-            logger.error(f"Firestore is_duplicate error for {key}: {e}")
+            applog.warning(f"Firestore is_duplicate error for {key}: {e}")
             return False

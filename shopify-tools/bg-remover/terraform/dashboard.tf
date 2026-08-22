@@ -72,8 +72,8 @@ locals {
     images_processed = {
       type         = "custom.googleapis.com/bg_remover/images_processed"
       display_name = "BG Remover images processed"
-      description  = "Images successfully processed by bg_remover_worker"
-      metric_kind  = "DELTA"
+      description  = "Images successfully processed by bg_remover_worker (gauge per batch; chart ALIGN_SUM)"
+      metric_kind  = "GAUGE"
     }
   }
 }
@@ -482,7 +482,7 @@ resource "google_monitoring_dashboard" "bg_remover" {
                     filter = "metric.type=\"custom.googleapis.com/bg_remover/images_processed\""
                     aggregation = {
                       alignmentPeriod  = "60s"
-                      perSeriesAligner = "ALIGN_DELTA"
+                      perSeriesAligner = "ALIGN_SUM"
                     }
                   }
                 }

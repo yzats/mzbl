@@ -1,13 +1,13 @@
 """HTTP probe: rembg membership-usage, then resume Cloud Tasks if credits remain."""
 
 import json
-import logging
 import os
-import sys
 from typing import Any, Dict, Tuple
 
 import functions_framework
 from flask import Request
+
+from src.utils import applog
 
 from src.queue.queue_control import (
     CIRCUIT_STILL_OPEN_LOG,
@@ -23,9 +23,6 @@ from src.removers import (
     membership_has_credits,
 )
 from src.removers.rembg_http import DEFAULT_MEMBERSHIP_USAGE_URL
-
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-logger = logging.getLogger(__name__)
 
 
 def _rembg_key() -> str:
@@ -51,7 +48,7 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
         if paused:
             emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {e}")
         else:
-            logger.warning("Rembg probe failed while queue is not paused: %s", e)
+            applog.warning(f"Rembg probe failed while queue is not paused: {e}")
         return {"status": "open", "reason": str(e), "paused": paused}
 
     write_rembg_credit_gauges(usage)
@@ -64,7 +61,7 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
         if paused:
             emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {reason}")
         else:
-            logger.warning("Rembg probe failed while queue is not paused: %s", reason)
+            applog.warning(f"Rembg probe failed while queue is not paused: {reason}")
         return {
             "status": "open",
             "reason": reason,

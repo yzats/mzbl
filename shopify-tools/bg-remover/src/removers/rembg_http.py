@@ -1,5 +1,7 @@
 import json
 import os
+
+from src.utils import applog
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -202,7 +204,7 @@ class RembgHostedRemover(BaseBackgroundRemover):
             raise NonRetryableBackgroundRemoverError("Input image bytes cannot be empty.")
 
         if rembg_out_of_credits_fault():
-            print(FAULT_INJECT_LOG, flush=True)
+            applog.warning(FAULT_INJECT_LOG)
             raise RembgUnavailableError(
                 f"Rembg monthly/credit limit (HTTP 429): {FAULT_INJECT_LOG} {_FAULT_CREDIT_429_BODY}"
             )
@@ -269,7 +271,7 @@ class RembgHostedRemover(BaseBackgroundRemover):
         See https://www.rembg.com/api/docs#tag/account
         """
         if rembg_out_of_credits_fault():
-            print(FAULT_INJECT_LOG, flush=True)
+            applog.warning(FAULT_INJECT_LOG)
             return {"credits": 0, "prepaidCredits": 0}
 
         headers = {}

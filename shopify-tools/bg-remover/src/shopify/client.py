@@ -2,6 +2,7 @@ import requests
 from typing import Optional, Dict, Any, List
 from .alt_helpers import has_alt_tag
 from ..removers.base import RetryableBackgroundRemoverError, NonRetryableBackgroundRemoverError
+from ..utils import applog
 from ..utils.retry import retry_with_exponential_backoff
 
 
@@ -179,7 +180,7 @@ class ShopifyGraphQLClient:
             raw_alt = target_node.get("alt") or image_info.get("altText") or ""
 
             if has_alt_tag(raw_alt, "hide") or has_alt_tag(raw_alt, "bg-removed") or "bg-removed" in raw_alt.lower() or "bg-removed" in (image_info.get("url") or "").lower():
-                print(f"Warning: Image at sequence {sequence} is already marked as processed/hidden.")
+                applog.debug(f"Image at sequence {sequence} is already marked as processed/hidden.")
 
             return [{
                 "media_id": target_node.get("id"),

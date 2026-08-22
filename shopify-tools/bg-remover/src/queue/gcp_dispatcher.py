@@ -1,12 +1,10 @@
 import json
-import logging
 import hashlib
 import time
 from typing import Dict, Any, Optional
 
+from src.utils import applog
 from .base import BaseTaskDispatcher, DispatchResult
-
-logger = logging.getLogger(__name__)
 
 
 def named_task_id(product_id: str, metadata: Optional[Dict[str, Any]] = None) -> str:
@@ -84,9 +82,7 @@ class GCPCloudTasksDispatcher(BaseTaskDispatcher):
         task_name = f"{self.queue_path}/tasks/{task_id}"
 
         if not self.client:
-            msg = f"[TASK SIMULATED] Cloud Tasks client unavailable; not enqueued: {task_name}"
-            print(msg, flush=True)
-            logger.warning(msg)
+            applog.warning(f"[TASK SIMULATED] Cloud Tasks client unavailable; not enqueued: {task_name}")
             return DispatchResult(task_id=task_name, outcome="simulated")
 
         from google.cloud import tasks_v2
@@ -110,20 +106,16 @@ class GCPCloudTasksDispatcher(BaseTaskDispatcher):
 
         try:
             response = self.client.create_task(request={"parent": self.queue_path, "task": task})
-            msg = f"[TASK ENQUEUED] {response.name}"
-            print(msg, flush=True)
-            logger.info(msg)
+            applog.info(f"[TASK ENQUEUED] {response.name}")
             return DispatchResult(task_id=response.name, outcome="enqueued")
         except Exception as e:
             # GCP Cloud Tasks returns 409 Already Exists if the name is in-flight or tombstoned (~1h).
             if "ALREADY_EXISTS" in str(e) or "409" in str(e):
                 updated_at = (metadata or {}).get("updated_at", "")
-                msg = (
+                applog.info(
                     f"[TASK DEDUPED] Cloud Tasks name already exists or is tombstoned "
                     f"(same product updated_at={updated_at!r}): {task_name}"
                 )
-                print(msg, flush=True)
-                logger.warning(msg)
                 return DispatchResult(task_id=task_name, outcome="deduplicated")
-            logger.error(f"Failed to enqueue GCP Cloud Task {task_name}: {e}")
+            applog.error(f"Failed to enqueue GCP Cloud Task {task_name}: {e}")
             raise

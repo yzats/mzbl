@@ -1,11 +1,9 @@
-import logging
 import threading
 from typing import Dict, Any, Optional, Callable
 
+from src.utils import applog
 from .base import BaseTaskDispatcher, BaseLockStore, DispatchResult
 from .memory_stores import InMemoryLockStore
-
-logger = logging.getLogger(__name__)
 
 
 class LocalTaskDispatcher(BaseTaskDispatcher):
@@ -46,19 +44,17 @@ class LocalTaskDispatcher(BaseTaskDispatcher):
         def _runner():
             lock_key = f"lock:product:{product_id}"
             if not self.lock_store.acquire_lock(lock_key, ttl_seconds=120):
-                msg = f"[SKIPPED] Local worker product lock active for {product_id} task={task_id}"
-                print(msg, flush=True)
-                logger.warning(msg)
+                applog.info(
+                    f"[SKIPPED] Local worker product lock active for {product_id} task={task_id}"
+                )
                 return
 
             try:
-                logger.info(f"Local worker starting task {task_id} for product {product_id}")
                 self.worker_func(payload)
             except Exception as e:
-                logger.error(f"Error executing local task {task_id}: {e}", exc_info=True)
+                applog.error(f"Error executing local task {task_id}: {e}")
             finally:
                 self.lock_store.release_lock(lock_key)
-                logger.info(f"Local worker released lock for product {product_id}")
 
         thread = threading.Thread(target=_runner, daemon=True)
         thread.start()

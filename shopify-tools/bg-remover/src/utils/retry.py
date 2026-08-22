@@ -1,9 +1,8 @@
 import time
 import functools
-import logging
 from typing import Callable, Any, Type, Tuple
 
-logger = logging.getLogger(__name__)
+from . import applog
 
 
 def retry_with_exponential_backoff(
@@ -29,13 +28,13 @@ def retry_with_exponential_backoff(
                     return func(*args, **kwargs)
                 except retryable_exceptions as e:
                     if x >= retries:
-                        logger.error(
+                        applog.error(
                             f"Function '{func.__name__}' failed after {retries} retries. Error: {e}"
                         )
                         raise e
                     
                     sleep_time = min(backoff_in_seconds * (2 ** x), max_backoff_in_seconds)
-                    logger.warning(
+                    applog.warning(
                         f"Retryable error in '{func.__name__}': {e}. Retrying in {sleep_time:.1f}s (attempt {x + 1}/{retries})..."
                     )
                     time.sleep(sleep_time)

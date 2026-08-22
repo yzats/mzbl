@@ -1,11 +1,10 @@
 """Cloud Monitoring custom metrics (gauges / counters). Fail open if GCP is unavailable."""
 
-import logging
 import os
 import time
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
+from src.utils import applog
 
 CREDITS_METRIC = "custom.googleapis.com/bg_remover/rembg_credits"
 PREPAID_CREDITS_METRIC = "custom.googleapis.com/bg_remover/rembg_prepaid_credits"
@@ -45,7 +44,7 @@ def _write_int_point(metric_type: str, value: int) -> None:
         client = monitoring_v3.MetricServiceClient()
         client.create_time_series(name=f"projects/{project_id}", time_series=[series])
     except Exception as e:
-        logger.warning("Failed to write custom metric %s: %s", metric_type, e)
+        applog.warning(f"Failed to write custom metric {metric_type}: {e}")
 
 
 def write_rembg_credit_gauges(usage: Dict[str, Any]) -> None:
@@ -59,7 +58,7 @@ def write_rembg_credit_gauges(usage: Dict[str, Any]) -> None:
 
 
 def increment_images_processed(count: int) -> None:
-    """Write a DELTA point for images successfully processed in this worker run."""
+    """Write a GAUGE point (images in this run). Custom metrics cannot be DELTA."""
     if count <= 0:
         return
     _write_int_point(IMAGES_PROCESSED_METRIC, count)
