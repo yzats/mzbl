@@ -36,6 +36,9 @@ resource "google_project_service" "required_services" {
     "firestore.googleapis.com",
     "secretmanager.googleapis.com",
     "iam.googleapis.com",
+    "cloudscheduler.googleapis.com",
+    "monitoring.googleapis.com",
+    "logging.googleapis.com",
   ])
 
   project            = var.gcp_project_id
@@ -168,6 +171,12 @@ resource "google_project_iam_member" "sa_cloudtasks_enqueuer" {
   member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
 }
 
+resource "google_project_iam_member" "sa_cloudtasks_queue_admin" {
+  project = var.gcp_project_id
+  role    = "roles/cloudtasks.queueAdmin"
+  member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
+}
+
 resource "google_secret_manager_secret_iam_member" "webhook_secret_access" {
   secret_id = google_secret_manager_secret.shopify_webhook_secret.id
   role      = "roles/secretmanager.secretAccessor"
@@ -207,6 +216,12 @@ resource "google_project_iam_member" "deployer_sa_user" {
 resource "google_project_iam_member" "deployer_cloudtasks_admin" {
   project = var.gcp_project_id
   role    = "roles/cloudtasks.admin"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_project_iam_member" "deployer_cloudscheduler_admin" {
+  project = var.gcp_project_id
+  role    = "roles/cloudscheduler.admin"
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
@@ -270,6 +285,12 @@ resource "google_service_account_iam_member" "cloudtasks_token_creator" {
   member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
 }
 
+resource "google_service_account_iam_member" "scheduler_act_as_runtime" {
+  service_account_id = google_service_account.bg_remover_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+}
+
 resource "google_service_account_iam_member" "gcf_robot_build_sa_user" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.serviceAccountUser"
@@ -293,4 +314,58 @@ resource "github_actions_secret" "gcp_sa_key_secret" {
   repository  = var.github_repo_name
   secret_name = "GCP_SA_KEY"
   value       = base64decode(google_service_account_key.github_deployer_key.private_key)
+}
+
+# ==============================================================================
+# 7. Circuit-open alerting (log-based metric)
+# ==============================================================================
+resource "google_logging_metric" "circuit_open" {
+  name        = "bg_remover_circuit_open"
+  description = "Counts [CIRCUIT OPEN] logs when Cloud Tasks queue is paused due to rembg outage/credits"
+  filter      = "textPayload:\"[CIRCUIT OPEN]\" OR jsonPayload.message:\"[CIRCUIT OPEN]\""
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+
+  depends_on = [google_project_service.required_services]
+}
+
+resource "google_monitoring_notification_channel" "circuit_email" {
+  count        = var.alert_email == "" ? 0 : 1
+  display_name = "BG Remover circuit email"
+  type         = "email"
+  labels = {
+    email_address = var.alert_email
+  }
+}
+
+resource "google_monitoring_alert_policy" "circuit_open" {
+  count        = var.alert_email == "" ? 0 : 1
+  display_name = "BG Remover rembg circuit open (queue paused)"
+  combiner     = "OR"
+  enabled      = true
+
+  conditions {
+    display_name = "Circuit open or still-open log"
+    condition_matched_log {
+      filter = <<-EOT
+        textPayload:"[CIRCUIT OPEN]" OR textPayload:"[CIRCUIT STILL OPEN]"
+        OR jsonPayload.message:"[CIRCUIT OPEN]" OR jsonPayload.message:"[CIRCUIT STILL OPEN]"
+      EOT
+    }
+  }
+
+  alert_strategy {
+    notification_rate_limit {
+      period = "86400s"
+    }
+    auto_close = "604800s"
+  }
+
+  notification_channels = [google_monitoring_notification_channel.circuit_email[0].id]
+  documentation {
+    content = "Rembg is down or out of credits; bg-remover-queue is paused. Probe rembg-circuit-probe runs every 5 minutes (GET /api/membership-usage) and resumes when credits > 0 or prepaidCredits > 0. Emails are rate-limited to once per 24h while [CIRCUIT STILL OPEN] keeps firing. Resume manually: gcloud tasks queues resume bg-remover-queue --location=us-central1"
+  }
 }

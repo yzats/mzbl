@@ -6,7 +6,10 @@ from src.queue.memory_stores import InMemoryLockStore, InMemoryDedupStore
 from src.queue.local_dispatcher import LocalTaskDispatcher
 from src.queue.gcp_dispatcher import GCPCloudTasksDispatcher, named_task_id
 from src.queue.firestore_stores import GCPFirestoreLockStore, firestore_document_id
-from src.queue.worker import execute_background_removal_job, bg_remover_worker
+from src.removers import RembgUnavailableError, NonRetryableBackgroundRemoverError
+from src.shopify import RetryableShopifyError
+from src.queue.circuit_probe import probe_rembg_and_resume
+from src.queue.worker import execute_background_removal_job
 
 
 def test_in_memory_lock_store():
@@ -149,3 +152,97 @@ def test_worker_execute_no_images(mocker):
     assert status_code == 200
     assert res_dict["status"] == "success"
     assert res_dict["processed_count"] == 0
+
+
+def test_worker_pauses_queue_on_rembg_unavailable(mocker):
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "test.myshopify.com")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
+    mock_client = MagicMock()
+    mock_client.get_unprocessed_images.return_value = [
+        {"media_id": "gid://shopify/MediaImage/1", "url": "https://cdn.example/x.jpg"}
+    ]
+    mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    mocker.patch("src.queue.worker.RembgHostedRemover")
+    pause = mocker.patch("src.queue.worker.pause_product_queue", return_value=True)
+    mocker.patch(
+        "process_product.process_product_batch",
+        side_effect=RembgUnavailableError("HTTP 401"),
+    )
+
+    payload = {"product_id": "gid://shopify/Product/12345", "shop_domain": "test.myshopify.com"}
+    res_dict, status_code = execute_background_removal_job(payload)
+
+    assert status_code == 503
+    assert res_dict["circuit"] == "open"
+    pause.assert_called_once()
+
+
+def test_worker_does_not_pause_on_bad_image(mocker):
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "test.myshopify.com")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
+    mock_client = MagicMock()
+    mock_client.get_unprocessed_images.return_value = [
+        {"media_id": "gid://shopify/MediaImage/1", "url": "https://cdn.example/x.jpg"}
+    ]
+    mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    mocker.patch("src.queue.worker.RembgHostedRemover")
+    pause = mocker.patch("src.queue.worker.pause_product_queue", return_value=True)
+    mocker.patch(
+        "process_product.process_product_batch",
+        side_effect=NonRetryableBackgroundRemoverError("HTTP 400"),
+    )
+
+    payload = {"product_id": "gid://shopify/Product/12345", "shop_domain": "test.myshopify.com"}
+    res_dict, status_code = execute_background_removal_job(payload)
+
+    assert status_code == 400
+    pause.assert_not_called()
+
+
+def test_worker_does_not_pause_on_shopify_rate_limit(mocker):
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "test.myshopify.com")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
+    mock_client = MagicMock()
+    mock_client.get_unprocessed_images.side_effect = RetryableShopifyError("HTTP 429")
+    mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    mocker.patch("src.queue.worker.RembgHostedRemover")
+    pause = mocker.patch("src.queue.worker.pause_product_queue", return_value=True)
+
+    payload = {"product_id": "gid://shopify/Product/12345", "shop_domain": "test.myshopify.com"}
+    res_dict, status_code = execute_background_removal_job(payload)
+
+    assert status_code == 503
+    assert "circuit" not in res_dict
+    pause.assert_not_called()
+
+
+def test_probe_resumes_queue_when_rembg_ok(mocker):
+    mocker.patch(
+        "src.queue.circuit_probe.RembgHostedRemover"
+    ).return_value.check_account_ready.return_value = {
+        "credits": 12,
+        "prepaidCredits": 0,
+    }
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue", return_value=True)
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "closed"
+    assert result["resumed"] is True
+    assert result["credits"] == 12
+    resume.assert_called_once()
+
+
+def test_probe_keeps_circuit_open_when_rembg_fails(mocker):
+    mocker.patch(
+        "src.queue.circuit_probe.RembgHostedRemover"
+    ).return_value.check_account_ready.side_effect = RembgUnavailableError(
+        "Rembg account has no usable credits (credits=0, prepaidCredits=0)"
+    )
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
+    pause = mocker.patch("src.queue.circuit_probe.pause_product_queue", return_value=False)
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "open"
+    resume.assert_not_called()
+    pause.assert_called_once()

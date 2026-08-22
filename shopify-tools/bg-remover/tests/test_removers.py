@@ -7,6 +7,7 @@ from src.removers.base import (
     BackgroundRemoverError,
     RetryableBackgroundRemoverError,
     NonRetryableBackgroundRemoverError,
+    RembgUnavailableError,
 )
 from src.removers.rembg_http import RembgHostedRemover
 
@@ -83,3 +84,69 @@ def test_rembg_hosted_remover_non_retryable_400(mocker):
     with pytest.raises(NonRetryableBackgroundRemoverError, match="HTTP 400"):
         remover.remove_background(b"fake_image")
     assert requests.post.call_count == 1  # Should NOT retry on 400
+
+
+def test_rembg_hosted_remover_401_unavailable_no_retry(mocker):
+    mocker.patch("time.sleep")
+    mock_401 = MagicMock(status_code=401, text="Unauthorized")
+    mocker.patch("requests.post", return_value=mock_401)
+
+    remover = RembgHostedRemover(api_url="https://api.rembg.com/rmbg")
+    with pytest.raises(RembgUnavailableError, match="HTTP 401"):
+        remover.remove_background(b"fake_image")
+    assert requests.post.call_count == 1
+
+
+def test_rembg_hosted_remover_402_unavailable(mocker):
+    mocker.patch("time.sleep")
+    mock_402 = MagicMock(status_code=402, text="Payment Required")
+    mocker.patch("requests.post", return_value=mock_402)
+
+    remover = RembgHostedRemover(api_url="https://api.rembg.com/rmbg")
+    with pytest.raises(RembgUnavailableError, match="HTTP 402"):
+        remover.remove_background(b"fake_image")
+
+
+def test_membership_has_credits():
+    from src.removers.rembg_http import membership_has_credits
+
+    assert membership_has_credits({"credits": 5, "prepaidCredits": 0}) is True
+    assert membership_has_credits({"credits": 0, "prepaidCredits": 3}) is True
+    assert membership_has_credits({"credits": 0, "prepaidCredits": 0}) is False
+    assert membership_has_credits({}) is False
+
+
+def test_membership_usage_ready(mocker):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = '{"credits":0,"prepaidCredits":8}'
+    mock_response.json.return_value = {"credits": 0, "prepaidCredits": 8}
+    mocker.patch("requests.get", return_value=mock_response)
+
+    remover = RembgHostedRemover(api_key="secret-token")
+    payload = remover.check_account_ready()
+    assert payload["prepaidCredits"] == 8
+    requests.get.assert_called_once()
+    assert requests.get.call_args[0][0] == "https://www.rembg.com/api/membership-usage"
+    assert requests.get.call_args[1]["headers"] == {"x-api-key": "secret-token"}
+
+
+def test_membership_usage_zero_credits(mocker):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = '{"credits":0,"prepaidCredits":0}'
+    mock_response.json.return_value = {"credits": 0, "prepaidCredits": 0}
+    mocker.patch("requests.get", return_value=mock_response)
+
+    remover = RembgHostedRemover(api_key="secret-token")
+    with pytest.raises(RembgUnavailableError, match="no usable credits"):
+        remover.check_account_ready()
+
+
+def test_membership_usage_401(mocker):
+    mock_response = MagicMock(status_code=401, text="Unauthorized")
+    mocker.patch("requests.get", return_value=mock_response)
+
+    remover = RembgHostedRemover(api_key="bad")
+    with pytest.raises(RembgUnavailableError, match="HTTP 401"):
+        remover.check_account_ready()

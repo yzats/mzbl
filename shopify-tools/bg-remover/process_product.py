@@ -29,7 +29,12 @@ from src.shopify import (
     ShopifyAPIError,
     append_alt_tag,
 )
-from src.removers import RembgHostedRemover, BackgroundRemoverError
+from src.removers import (
+    RembgHostedRemover,
+    BackgroundRemoverError,
+    RetryableBackgroundRemoverError,
+    RembgUnavailableError,
+)
 
 
 def process_product_batch(
@@ -84,6 +89,8 @@ def process_product_batch(
             })
             print(f"     Staged URL ready for media ID: {media_id}")
 
+        except (RetryableBackgroundRemoverError, RembgUnavailableError):
+            raise
         except Exception as e:
             print(f"  ⚠️ Error processing media ID {media_id}: {e}")
             failed_images.append((img_info, e))

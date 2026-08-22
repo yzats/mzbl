@@ -5,6 +5,7 @@ from pathlib import Path
 # Cloud Functions gen2 resolves --entry-point names from this module.
 from src.webhooks.receiver import shopify_webhook_receiver  # noqa: F401
 from src.queue.worker import bg_remover_worker  # noqa: F401
+from src.queue.circuit_probe import rembg_circuit_probe  # noqa: F401
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:

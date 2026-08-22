@@ -30,9 +30,15 @@ REMBG_API_KEY = _setting("REMBG_API_KEY")
 DEFAULT_BG_COLOR = _setting("DEFAULT_BG_COLOR", "#ffffff")
 DELETE_ORIGINAL = _setting("DELETE_ORIGINAL", "false").lower() == "true"
 
-from src.shopify import ShopifyGraphQLClient, ShopifyAPIError
-from src.removers import RembgHostedRemover, BackgroundRemoverError, RetryableBackgroundRemoverError
+from src.shopify import ShopifyGraphQLClient, ShopifyAPIError, RetryableShopifyError
+from src.removers import (
+    RembgHostedRemover,
+    BackgroundRemoverError,
+    RetryableBackgroundRemoverError,
+    RembgUnavailableError,
+)
 from src.queue.memory_stores import InMemoryLockStore
+from src.queue.queue_control import pause_product_queue
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
@@ -115,8 +121,11 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
 
     except (ShopifyAPIError, BackgroundRemoverError) as e:
         logger.error(f"Error processing background removal for product {product_id}: {e}")
-        if isinstance(e, RetryableBackgroundRemoverError):
-            return {"status": "error", "message": str(e)}, 503  # HTTP 503 triggers GCP Task Retry
+        if isinstance(e, (RembgUnavailableError, RetryableBackgroundRemoverError)):
+            pause_product_queue(str(e))
+            return {"status": "error", "circuit": "open", "message": str(e)}, 503
+        if isinstance(e, RetryableShopifyError):
+            return {"status": "error", "message": str(e)}, 503
         return {"status": "error", "message": str(e)}, 400
 
     finally:

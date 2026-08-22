@@ -132,32 +132,32 @@ To ensure zero lost tasks and prevent infinite retries on permanent failures, bo
 
 ### A. Background Remover Interface (`src/removers/`) Error Handling
 
-The background remover client (`RembgHostedRemover`) categorizes external API responses into two custom exception hierarchies defined in `src/removers/base.py`:
+The background remover client (`RembgHostedRemover`) categorizes rembg API responses in `src/removers/base.py`:
 
 ```
                     ┌───────────────────────────────┐
                     │    BackgroundRemoverError     │
-                    │        (Base Exception)       │
                     └──────────────┬────────────────┘
-                                   │
-            ┌──────────────────────┴──────────────────────┐
-            ▼                                             ▼
-┌───────────────────────────────────────┐   ┌───────────────────────────────────────────┐
-│   RetryableBackgroundRemoverError     │   │   NonRetryableBackgroundRemoverError      │
-│ (Transient errors: 429, 500, 502-504) │   │  (Fatal client errors: 400, 401, corrupted)│
-└───────────────────────────────────────┘   └───────────────────────────────────────────┘
+           ┌───────────────────────┼───────────────────────┐
+           ▼                       ▼                       ▼
+┌─────────────────────┐ ┌──────────────────────┐ ┌──────────────────────────┐
+│ RetryableBackground │ │ RembgUnavailableError│ │ NonRetryableBackground   │
+│ RemoverError        │ │ 401, 402, 403        │ │ RemoverError             │
+│ 429, 5xx, timeout   │ │ Pause queue + 503    │ │ 400, 404, bad image      │
+└─────────────────────┘ └──────────────────────┘ └──────────────────────────┘
 ```
 
 #### Status Code & Exception Mapping (`rembg_http.py`):
 | HTTP Status / Condition | Exception Raised | Worker Response | Retry Strategy |
 | :--- | :--- | :--- | :--- |
 | **HTTP 200 OK** | None (Returns image bytes) | HTTP 200 Success | None |
-| **HTTP 429 (Rate Limit)** | `RetryableBackgroundRemoverError` | **HTTP 503** | Exponential backoff (1s, 2s, 4s...) via `@retry_with_exponential_backoff`. If max retries exhausted, returns HTTP 503 to Cloud Tasks to schedule queue-level retry. |
-| **HTTP 500, 502, 503, 504** | `RetryableBackgroundRemoverError` | **HTTP 503** | Retried via exponential backoff decorator. |
-| **Network Timeout / Connection Error** | `RetryableBackgroundRemoverError` | **HTTP 503** | Retried via exponential backoff decorator. |
-| **HTTP 400 (Bad Request / Corrupted)** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Logged as fatal error and exited cleanly to drop task from queue. |
-| **HTTP 401, 403 (Invalid API Key)** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Exits cleanly to avoid queue hammer. |
-| **Empty Input / Empty Response Bytes** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Exits cleanly. |
+| **HTTP 429 (Rate Limit)** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** | In-process backoff, then pause `bg-remover-queue`. Task stays until probe resumes. |
+| **HTTP 500, 502, 503, 504** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** | Same as 429. |
+| **Network Timeout / Connection Error** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** | Same as 429. |
+| **HTTP 400 (Bad Request / Corrupted)** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Queue stays running. |
+| **HTTP 401, 402, 403 (credits / auth)** | `RembgUnavailableError` | Pause queue + **HTTP 503** | No in-process retry. Pause Cloud Tasks; do not ack the task. |
+| **HTTP 404, 415, 422** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Queue stays running. |
+| **Empty Input / Empty Response Bytes** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** |
 
 ---
 
@@ -206,7 +206,7 @@ def retry_with_exponential_backoff(
 - **Algorithm:** Delay between retry $i$ (where $i \in \{1, \dots, N\}$) is calculated as:
   $$\text{delay} = \text{backoff\_in\_seconds} \times 2^{(i - 1)}$$
   *(e.g., initial delay 1.0s $\rightarrow$ 1.0s, 2.0s, 4.0s).*
-- **Queue Level Escalation:** If all $N$ in-memory retries fail, the exception bubbles up to `worker.py`. `worker.py` maps `RetryableBackgroundRemoverError` or `RetryableShopifyError` to **HTTP 503**, causing GCP Cloud Tasks to reschedule the task according to its queue-level backoff rules.
+- **Queue Level Escalation:** If all $N$ in-memory retries fail, the exception bubbles up to `worker.py`. Rembg retryable/unavailable errors **pause** `bg-remover-queue` and return **HTTP 503**. `RetryableShopifyError` returns **HTTP 503** without pausing (Shopify leaky bucket is not a rembg outage).
 
 ---
 
@@ -261,7 +261,8 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
 | Function Name | Trigger Type | Runtime | Memory / CPU | Concurrency | Timeout | IAM Roles & Secret Access |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `shopify_webhook_receiver` | HTTP POST | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 80 | 10 seconds | `roles/cloudtasks.enqueuer`, access to `SHOPIFY_WEBHOOK_SECRET` |
-| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, `roles/cloudtasks.taskRunner`, access to `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY` |
+| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, `roles/cloudtasks.taskRunner`, `roles/cloudtasks.queueAdmin` (pause/resume), access to `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY` |
+| `rembg_circuit_probe` | HTTP GET/POST (Cloud Scheduler every 5 min, OIDC) | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 1 | 60 seconds | Same runtime SA; `REMBG_API_KEY`. Calls `GET https://www.rembg.com/api/membership-usage` (not `/rmbg`). **Not** a task on `bg-remover-queue`. |
 
 ---
 
@@ -282,7 +283,7 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
     maxBackoff: 300s
     maxDoublings: 3
   ```
-- **Dead-Letter Queue (DLQ):** After 5 failed attempts (returning HTTP 503), tasks are routed to `bg-remover-dlq` topic for alerting and manual inspection.
+- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the worker calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). Logs `[CIRCUIT OPEN]` on a new pause and `[CIRCUIT STILL OPEN]` while rembg stays down. Optional email (`alert_email`): log-based alert rate-limited to **once per 24 hours** while those logs continue. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
 
 ---
 
@@ -350,6 +351,8 @@ shopify-tools/
     │   │   ├── firestore_stores.py      # GCPFirestoreLockStore & GCPFirestoreDedupStore
     │   │   ├── local_dispatcher.py      # LocalTaskDispatcher (thread-based)
     │   │   ├── gcp_dispatcher.py        # GCPCloudTasksDispatcher (Cloud Tasks Named Tasks)
+    │   │   ├── queue_control.py         # Pause/resume bg-remover-queue (rembg circuit)
+    │   │   ├── circuit_probe.py         # rembg_circuit_probe HTTP Cloud Function
     │   │   └── worker.py                # bg_remover_worker HTTP Cloud Function entrypoint
     │   └── webhooks/
     │       ├── hmac_verifier.py         # verify_shopify_hmac() signature verifier
@@ -451,6 +454,9 @@ Terraform enables these project APIs (GitHub Actions does not):
 - `firestore.googleapis.com`
 - `secretmanager.googleapis.com`
 - `iam.googleapis.com`
+- `cloudscheduler.googleapis.com`
+- `monitoring.googleapis.com`
+- `logging.googleapis.com`
 
 #### 2. How GitHub Secrets & Service Accounts are Automated
 Terraform creates a GCP Service Account (`github-deployer`) used only by GitHub Actions to deploy Cloud Functions. It generates a private JSON key (`google_service_account_key`) and writes `GCP_PROJECT_ID` and `GCP_SA_KEY` into the `yzats/mzbl` GitHub repository via `github_actions_secret`.
@@ -464,16 +470,22 @@ Terraform creates a GCP Service Account (`github-deployer`) used only by GitHub 
 - `roles/logging.logWriter`
 - `roles/iam.serviceAccountUser`
 - `roles/cloudtasks.admin` (describe/verify the queue)
+- `roles/cloudscheduler.admin` (upsert `rembg-circuit-probe` job)
 - `roles/secretmanager.viewer` / `roles/secretmanager.secretAccessor` (bind Secret Manager secrets to functions)
 
 Runtime service account `bg-remover-sa` IAM:
 - `roles/datastore.user`
 - `roles/cloudtasks.enqueuer`
 - `roles/cloudtasks.taskRunner`
+- `roles/cloudtasks.queueAdmin` (pause/resume `bg-remover-queue` on rembg circuit open/close)
 - `roles/iam.serviceAccountUser` **on itself** (`iam.serviceAccounts.actAs`) so `create_task` can attach an OIDC token for `bg-remover-sa`
 - Secret accessor on `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY`
 
 The Cloud Tasks service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com`) gets `roles/iam.serviceAccountTokenCreator` on `bg-remover-sa` so OIDC-authenticated worker invocations succeed.
+
+The Cloud Scheduler service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com`) gets `roles/iam.serviceAccountUser` on `bg-remover-sa` so the 6-hour probe can mint an OIDC token.
+
+Terraform also creates log-based metric `bg_remover_circuit_open` (`[CIRCUIT OPEN]`) and, when `alert_email` is set, a **log-based** alert on `[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]` with `notification_rate_limit` **86400s** (email at most once per 24h while the circuit stays open). Manual resume: `gcloud tasks queues resume bg-remover-queue --location=us-central1`.
 
 #### 3. Token Refresh / Expiration Behavior
 - The `GITHUB_TOKEN` PAT is **ONLY used locally when running `terraform apply`**.

@@ -42,3 +42,9 @@ variable "rembg_api_key" {
   description = "Rembg Hosted API Key"
   sensitive   = true
 }
+
+variable "alert_email" {
+  type        = string
+  description = "Email for rembg circuit-open alerts. Empty string skips the Monitoring notification channel."
+  default     = ""
+}

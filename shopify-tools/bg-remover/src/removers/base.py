@@ -12,8 +12,13 @@ class RetryableBackgroundRemoverError(BackgroundRemoverError):
     pass
 
 
+class RembgUnavailableError(BackgroundRemoverError):
+    """Rembg credits or auth failure. Pause Cloud Tasks; worker returns HTTP 503 (no in-process retry)."""
+    pass
+
+
 class NonRetryableBackgroundRemoverError(BackgroundRemoverError):
-    """Exception raised for permanent errors (e.g. HTTP 400 Bad Request, HTTP 401 Unauthorized, corrupted image)."""
+    """Exception raised for permanent errors (e.g. HTTP 400, 404, 415, 422, corrupted image)."""
     pass
 
 

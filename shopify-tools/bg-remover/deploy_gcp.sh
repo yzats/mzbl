@@ -53,7 +53,7 @@ gcloud functions deploy bg_remover_worker \
   --timeout=120s \
   --project="${GCP_PROJECT_ID}" \
   --build-service-account="${BUILD_SERVICE_ACCOUNT}" \
-  --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION}" \
+  --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION},QUEUE_NAME=${QUEUE_NAME}" \
   --set-secrets="SHOPIFY_ADMIN_API_ACCESS_TOKEN=SHOPIFY_ADMIN_API_ACCESS_TOKEN:latest,REMBG_API_KEY=REMBG_API_KEY:latest"
 
 WORKER_URL=$(gcloud functions describe bg_remover_worker --gen2 --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format="value(serviceConfig.uri)")
@@ -85,9 +85,58 @@ gcloud functions deploy shopify_webhook_receiver \
 
 RECEIVER_URL=$(gcloud functions describe shopify_webhook_receiver --gen2 --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format="value(serviceConfig.uri)")
 
+echo "5. Deploying 'rembg_circuit_probe' Cloud Function..."
+gcloud functions deploy rembg_circuit_probe \
+  --gen2 \
+  --runtime=python311 \
+  --region="${GCP_REGION}" \
+  --source="${BG_REMOVER_DIR}" \
+  --entry-point=rembg_circuit_probe \
+  --trigger-http \
+  --no-allow-unauthenticated \
+  --service-account="${SERVICE_ACCOUNT_EMAIL}" \
+  --memory=256Mi \
+  --timeout=60s \
+  --project="${GCP_PROJECT_ID}" \
+  --build-service-account="${BUILD_SERVICE_ACCOUNT}" \
+  --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION},QUEUE_NAME=${QUEUE_NAME}" \
+  --set-secrets="REMBG_API_KEY=REMBG_API_KEY:latest"
+
+PROBE_URL=$(gcloud functions describe rembg_circuit_probe --gen2 --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format="value(serviceConfig.uri)")
+
+echo "   Granting runtime SA invoker on probe..."
+gcloud run services add-iam-policy-binding rembg-circuit-probe \
+  --region="${GCP_REGION}" \
+  --project="${GCP_PROJECT_ID}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
+  --role="roles/run.invoker" \
+  --quiet
+
+echo "6. Upserting Cloud Scheduler job rembg-circuit-probe (every 5 minutes)..."
+if gcloud scheduler jobs describe rembg-circuit-probe --location="${GCP_REGION}" --project="${GCP_PROJECT_ID}" &>/dev/null; then
+  gcloud scheduler jobs update http rembg-circuit-probe \
+    --location="${GCP_REGION}" \
+    --project="${GCP_PROJECT_ID}" \
+    --schedule="*/5 * * * *" \
+    --uri="${PROBE_URL}" \
+    --http-method=POST \
+    --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
+    --oidc-token-audience="${PROBE_URL}"
+else
+  gcloud scheduler jobs create http rembg-circuit-probe \
+    --location="${GCP_REGION}" \
+    --project="${GCP_PROJECT_ID}" \
+    --schedule="*/5 * * * *" \
+    --uri="${PROBE_URL}" \
+    --http-method=POST \
+    --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
+    --oidc-token-audience="${PROBE_URL}"
+fi
+
 echo "======================================================================"
 echo "GCP Deployment Completed Successfully!"
 echo "   Webhook Receiver Endpoint: ${RECEIVER_URL}"
 echo "   Worker Endpoint:           ${WORKER_URL}"
+echo "   Circuit Probe Endpoint:    ${PROBE_URL}"
 echo "Paste the Webhook Receiver Endpoint into Shopify Admin → Settings → Notifications → Webhooks (products/update)."
 echo "======================================================================"
