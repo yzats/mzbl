@@ -15,11 +15,10 @@ from src.queue.queue_control import (
     is_product_queue_paused,
     resume_product_queue,
 )
-from src.queue.custom_metrics import write_rembg_credit_gauges
+from src.queue.custom_metrics import write_circuit_open_gauge, write_rembg_credit_gauges
 from src.removers import (
+    BackgroundRemoverError,
     RembgHostedRemover,
-    RembgUnavailableError,
-    RetryableBackgroundRemoverError,
     membership_has_credits,
 )
 from src.removers.rembg_http import DEFAULT_MEMBERSHIP_USAGE_URL
@@ -43,8 +42,9 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
     remover = RembgHostedRemover(api_key=_rembg_key(), membership_usage_url=usage_url)
     try:
         usage = remover.get_membership_usage()
-    except (RembgUnavailableError, RetryableBackgroundRemoverError) as e:
+    except BackgroundRemoverError as e:
         paused = is_product_queue_paused()
+        write_circuit_open_gauge(bool(paused))
         if paused:
             emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {e}")
         else:
@@ -58,6 +58,7 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
             f"(credits={usage.get('credits')}, prepaidCredits={usage.get('prepaidCredits')})"
         )
         paused = is_product_queue_paused()
+        write_circuit_open_gauge(bool(paused))
         if paused:
             emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {reason}")
         else:

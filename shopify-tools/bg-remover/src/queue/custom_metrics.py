@@ -9,6 +9,7 @@ from src.utils import applog
 CREDITS_METRIC = "custom.googleapis.com/bg_remover/rembg_credits"
 PREPAID_CREDITS_METRIC = "custom.googleapis.com/bg_remover/rembg_prepaid_credits"
 IMAGES_PROCESSED_METRIC = "custom.googleapis.com/bg_remover/images_processed"
+CIRCUIT_OPEN_METRIC = "custom.googleapis.com/bg_remover/circuit_open"
 
 
 def _as_int(value: Any) -> Optional[int]:
@@ -62,3 +63,8 @@ def increment_images_processed(count: int) -> None:
     if count <= 0:
         return
     _write_int_point(IMAGES_PROCESSED_METRIC, count)
+
+
+def write_circuit_open_gauge(is_open: bool) -> None:
+    """1 = bg-remover-queue paused (circuit open), 0 = running."""
+    _write_int_point(CIRCUIT_OPEN_METRIC, 1 if is_open else 0)

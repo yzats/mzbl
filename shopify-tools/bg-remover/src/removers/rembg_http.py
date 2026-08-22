@@ -293,14 +293,19 @@ class RembgHostedRemover(BaseBackgroundRemover):
                 f"Fatal request error connecting to rembg membership-usage: {e}"
             ) from e
 
-        raise_for_rembg_status(response.status_code, response.text, context="membership-usage")
-
         try:
             payload = response.json()
-        except ValueError as e:
-            raise NonRetryableBackgroundRemoverError(
-                "rembg membership-usage returned non-JSON body."
-            ) from e
+        except ValueError:
+            payload = None
+
+        # Prefer account numbers for the dashboard even when rembg uses a non-200 status.
+        if isinstance(payload, dict) and (
+            "credits" in payload or "prepaidCredits" in payload
+        ):
+            return payload
+
+        raise_for_rembg_status(response.status_code, response.text, context="membership-usage")
+
         if not isinstance(payload, dict):
             raise NonRetryableBackgroundRemoverError(
                 "rembg membership-usage returned a non-object JSON payload."

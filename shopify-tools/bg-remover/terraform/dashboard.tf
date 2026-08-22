@@ -75,6 +75,12 @@ locals {
       description  = "Images successfully processed by bg_remover_worker (gauge per batch; chart ALIGN_SUM)"
       metric_kind  = "GAUGE"
     }
+    circuit_open = {
+      type         = "custom.googleapis.com/bg_remover/circuit_open"
+      display_name = "BG Remover circuit open"
+      description  = "1 if bg-remover-queue is paused, 0 if running"
+      metric_kind  = "GAUGE"
+    }
   }
 }
 
@@ -102,10 +108,10 @@ resource "google_monitoring_dashboard" "bg_remover" {
         {
           xPos   = 0
           yPos   = 0
-          width  = 6
+          width  = 12
           height = 4
           widget = {
-            title = "Circuit open / still open (5m buckets)"
+            title = "Circuit state (1 = open / queue paused, 0 = closed / running)"
             xyChart = {
               chartOptions      = { mode = "COLOR" }
               timeshiftDuration = "0s"
@@ -114,41 +120,15 @@ resource "google_monitoring_dashboard" "bg_remover" {
                 minAlignmentPeriod = "60s"
                 timeSeriesQuery = {
                   timeSeriesFilter = {
-                    filter = "metric.type=\"logging.googleapis.com/user/bg_remover_circuit_open\""
+                    filter = "metric.type=\"custom.googleapis.com/bg_remover/circuit_open\""
                     aggregation = {
                       alignmentPeriod  = "60s"
-                      perSeriesAligner = "ALIGN_DELTA"
+                      perSeriesAligner = "ALIGN_NEXT_OLDER"
                     }
                   }
                 }
               }]
-              yAxis = { label = "events", scale = "LINEAR" }
-            }
-          }
-        },
-        {
-          xPos   = 6
-          yPos   = 0
-          width  = 6
-          height = 4
-          widget = {
-            title = "Circuit closed (queue resumed)"
-            xyChart = {
-              chartOptions = { mode = "COLOR" }
-              dataSets = [{
-                plotType           = "LINE"
-                minAlignmentPeriod = "60s"
-                timeSeriesQuery = {
-                  timeSeriesFilter = {
-                    filter = "metric.type=\"logging.googleapis.com/user/bg_remover_circuit_closed\""
-                    aggregation = {
-                      alignmentPeriod  = "60s"
-                      perSeriesAligner = "ALIGN_DELTA"
-                    }
-                  }
-                }
-              }]
-              yAxis = { label = "events", scale = "LINEAR" }
+              yAxis = { label = "open", scale = "LINEAR" }
             }
           }
         },
@@ -488,6 +468,57 @@ resource "google_monitoring_dashboard" "bg_remover" {
                 }
               }]
               yAxis = { label = "images", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 0
+          yPos   = 24
+          width  = 12
+          height = 5
+          widget = {
+            title = "Logs: circuit, warnings, and errors"
+            logsPanel = {
+              resourceNames = ["projects/${var.gcp_project_id}"]
+              filter        = <<-EOT
+                resource.type="cloud_run_revision"
+                (resource.labels.service_name="bg-remover-worker" OR resource.labels.service_name="rembg-circuit-probe" OR resource.labels.service_name="shopify-webhook-receiver")
+                (severity>=WARNING OR jsonPayload.message:"[CIRCUIT" OR textPayload:"[CIRCUIT" OR jsonPayload.message:"[FAULT" OR textPayload:"[FAULT")
+              EOT
+            }
+          }
+        },
+        {
+          xPos   = 0
+          yPos   = 29
+          width  = 6
+          height = 5
+          widget = {
+            title = "Logs: bg-remover-worker"
+            logsPanel = {
+              resourceNames = ["projects/${var.gcp_project_id}"]
+              filter        = <<-EOT
+                resource.type="cloud_run_revision"
+                resource.labels.service_name="bg-remover-worker"
+                -logName:"projects/${var.gcp_project_id}/logs/run.googleapis.com%2Frequests"
+              EOT
+            }
+          }
+        },
+        {
+          xPos   = 6
+          yPos   = 29
+          width  = 6
+          height = 5
+          widget = {
+            title = "Logs: rembg-circuit-probe"
+            logsPanel = {
+              resourceNames = ["projects/${var.gcp_project_id}"]
+              filter        = <<-EOT
+                resource.type="cloud_run_revision"
+                resource.labels.service_name="rembg-circuit-probe"
+                -logName:"projects/${var.gcp_project_id}/logs/run.googleapis.com%2Frequests"
+              EOT
             }
           }
         }

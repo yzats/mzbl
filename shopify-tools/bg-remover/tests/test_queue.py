@@ -288,19 +288,25 @@ def test_worker_increments_images_processed(mocker):
 
 def test_custom_metrics_forward_gauges_and_counter(mocker):
     from src.queue.custom_metrics import (
+        CIRCUIT_OPEN_METRIC,
         CREDITS_METRIC,
         IMAGES_PROCESSED_METRIC,
         PREPAID_CREDITS_METRIC,
         increment_images_processed,
+        write_circuit_open_gauge,
         write_rembg_credit_gauges,
     )
 
     write = mocker.patch("src.queue.custom_metrics._write_int_point")
     write_rembg_credit_gauges({"credits": 9, "prepaidCredits": 2})
     increment_images_processed(3)
+    write_circuit_open_gauge(True)
+    write_circuit_open_gauge(False)
     write.assert_any_call(CREDITS_METRIC, 9)
     write.assert_any_call(PREPAID_CREDITS_METRIC, 2)
     write.assert_any_call(IMAGES_PROCESSED_METRIC, 3)
+    write.assert_any_call(CIRCUIT_OPEN_METRIC, 1)
+    write.assert_any_call(CIRCUIT_OPEN_METRIC, 0)
 
 
 def test_increment_images_processed_skips_zero(mocker):

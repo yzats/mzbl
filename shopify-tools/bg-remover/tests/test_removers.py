@@ -205,11 +205,21 @@ def test_membership_usage_zero_credits(mocker):
 
 def test_membership_usage_401(mocker):
     mock_response = MagicMock(status_code=401, text="Unauthorized")
+    mock_response.json.side_effect = ValueError("not json")
     mocker.patch("requests.get", return_value=mock_response)
 
     remover = RembgHostedRemover(api_key="bad")
     with pytest.raises(RembgUnavailableError, match="HTTP 401"):
         remover.check_account_ready()
+
+
+def test_membership_usage_non_200_still_returns_credit_fields(mocker):
+    mock_response = MagicMock(status_code=402, text='{"credits":0,"prepaidCredits":2}')
+    mock_response.json.return_value = {"credits": 0, "prepaidCredits": 2}
+    mocker.patch("requests.get", return_value=mock_response)
+
+    remover = RembgHostedRemover(api_key="secret-token")
+    assert remover.get_membership_usage() == {"credits": 0, "prepaidCredits": 2}
 
 
 @pytest.mark.parametrize(
