@@ -11,6 +11,7 @@ from flask import Request
 
 from src.queue.queue_control import (
     CIRCUIT_STILL_OPEN_LOG,
+    emit_circuit_log,
     is_product_queue_paused,
     resume_product_queue,
 )
@@ -46,9 +47,7 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
     except (RembgUnavailableError, RetryableBackgroundRemoverError) as e:
         paused = is_product_queue_paused()
         if paused:
-            msg = f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {e}"
-            print(msg, flush=True)
-            logger.error(msg)
+            emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {e}")
         else:
             logger.warning("Rembg probe failed while queue is not paused: %s", e)
         return {"status": "open", "reason": str(e), "paused": paused}
