@@ -336,12 +336,15 @@ resource "github_actions_secret" "gcp_sa_key_secret" {
 }
 
 # ==============================================================================
-# 7. Circuit-open alerting (log-based metric)
+# 7. Circuit alerting (metric on OPEN / STILL OPEN logs; closes after resume)
 # ==============================================================================
 resource "google_logging_metric" "circuit_open" {
   name        = "bg_remover_circuit_open"
-  description = "Counts [CIRCUIT OPEN] logs when Cloud Tasks queue is paused due to rembg outage/credits"
-  filter      = "textPayload:\"[CIRCUIT OPEN]\" OR jsonPayload.message:\"[CIRCUIT OPEN]\""
+  description = "Counts [CIRCUIT OPEN] and [CIRCUIT STILL OPEN] while bg-remover-queue is paused"
+  filter      = <<-EOT
+    textPayload:"[CIRCUIT OPEN]" OR textPayload:"[CIRCUIT STILL OPEN]"
+    OR jsonPayload.message:"[CIRCUIT OPEN]" OR jsonPayload.message:"[CIRCUIT STILL OPEN]"
+  EOT
 
   metric_descriptor {
     metric_kind = "DELTA"
@@ -360,31 +363,48 @@ resource "google_monitoring_notification_channel" "circuit_email" {
   }
 }
 
+resource "google_monitoring_notification_channel" "circuit_sms" {
+  count        = var.alert_sms == "" ? 0 : 1
+  display_name = "BG Remover circuit SMS"
+  type         = "sms"
+  labels = {
+    number = var.alert_sms
+  }
+}
+
 resource "google_monitoring_alert_policy" "circuit_open" {
-  count        = var.alert_email == "" ? 0 : 1
+  count        = var.alert_email == "" && var.alert_sms == "" ? 0 : 1
   display_name = "BG Remover rembg circuit open (queue paused)"
   combiner     = "OR"
   enabled      = true
 
   conditions {
-    display_name = "Circuit open or still-open log"
-    condition_matched_log {
-      filter = <<-EOT
-        textPayload:"[CIRCUIT OPEN]" OR textPayload:"[CIRCUIT STILL OPEN]"
-        OR jsonPayload.message:"[CIRCUIT OPEN]" OR jsonPayload.message:"[CIRCUIT STILL OPEN]"
-      EOT
+    display_name = "Circuit open/still-open logs in the last 5 minutes"
+    condition_threshold {
+      filter          = "metric.type=\"logging.googleapis.com/user/bg_remover_circuit_open\""
+      duration        = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_DELTA"
+      }
     }
   }
 
   alert_strategy {
-    notification_rate_limit {
-      period = "86400s"
-    }
-    auto_close = "604800s"
+    auto_close = "1800s"
+    notification_prompts = ["OPENED", "CLOSED"]
   }
 
-  notification_channels = [google_monitoring_notification_channel.circuit_email[0].id]
+  notification_channels = concat(
+    var.alert_email == "" ? [] : [google_monitoring_notification_channel.circuit_email[0].id],
+    var.alert_sms == "" ? [] : [google_monitoring_notification_channel.circuit_sms[0].id],
+  )
+
   documentation {
-    content = "Rembg is down or out of credits; bg-remover-queue is paused. Probe rembg-circuit-probe runs every 5 minutes (GET /api/membership-usage) and resumes when credits > 0 or prepaidCredits > 0. Emails are rate-limited to once per 24h while [CIRCUIT STILL OPEN] keeps firing. Resume manually: gcloud tasks queues resume bg-remover-queue --location=us-central1"
+    content = "Rembg failed and the worker paused bg-remover-queue. SMS/email on open and when the incident closes (no OPEN/STILL OPEN logs for ~5 minutes after the probe resumes the queue). Probe rembg-circuit-probe runs every 5 minutes. Manual resume: gcloud tasks queues resume bg-remover-queue --location=us-central1"
   }
+
+  depends_on = [google_logging_metric.circuit_open]
 }

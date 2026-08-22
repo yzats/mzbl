@@ -1,5 +1,9 @@
+import json
+from io import BytesIO
+from typing import Any, Dict, List, Optional, Tuple
+
 import requests
-from typing import Any, Dict, Optional
+from PIL import Image
 from .base import (
     BaseBackgroundRemover,
     BackgroundRemoverError,
@@ -10,6 +14,90 @@ from .base import (
 from ..utils.retry import retry_with_exponential_backoff
 
 DEFAULT_MEMBERSHIP_USAGE_URL = "https://www.rembg.com/api/membership-usage"
+
+# https://www.rembg.com/en/pricing — Free API max resolution 460×460
+FREEMIUM_API_MAX_EDGE = 460
+# Ignore sources only slightly above 460 (e.g. 461→460). Freemium is a large original stuffed into 460×460.
+FREEMIUM_SHRINK_LEEWAY_PX = 8
+# https://www.rembg.com/en/api-usage — monthly credits 429 vs short-term rate limit 429
+_CREDIT_EXHAUSTION_NEEDLES = ("monthly limit", "purchasing")
+
+
+def rembg_error_message_texts(body: str) -> List[str]:
+    """Collect human-readable strings from rembg single- or multi-error JSON (or raw text)."""
+    if not body:
+        return []
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return [body]
+    if not isinstance(payload, dict):
+        return [body]
+
+    texts: List[str] = []
+    err = payload.get("error")
+    if isinstance(err, str) and err.strip():
+        texts.append(err)
+    details = payload.get("details")
+    if isinstance(details, list):
+        for item in details:
+            if isinstance(item, dict):
+                msg = item.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    texts.append(msg)
+            elif isinstance(item, str) and item.strip():
+                texts.append(item)
+    return texts or [body]
+
+
+def rembg_429_is_credit_exhaustion(body: str) -> bool:
+    """True if a 429 body looks like monthly/prepaid credit exhaustion, not a short-term rate limit."""
+    blob = " ".join(rembg_error_message_texts(body)).lower()
+    return any(needle in blob for needle in _CREDIT_EXHAUSTION_NEEDLES)
+
+
+def image_pixel_size(data: bytes) -> Optional[Tuple[int, int]]:
+    """Return (width, height) or None if the bytes are not a readable image."""
+    if not data:
+        return None
+    try:
+        with Image.open(BytesIO(data)) as im:
+            return im.size
+    except Exception:
+        return None
+
+
+def output_is_freemium_capped(input_data: bytes, output_data: bytes) -> bool:
+    """True when output fits the free 460×460 API box and the source was clearly larger.
+
+    Leeway is on how far the *input* sat above 460, not an isolated longest-side
+    shrink. 461→460 is allowed; 800→460 is not.
+    """
+    src = image_pixel_size(input_data)
+    out = image_pixel_size(output_data)
+    if src is None or out is None:
+        return False
+    in_w, in_h = src
+    out_w, out_h = out
+    if in_w <= FREEMIUM_API_MAX_EDGE and in_h <= FREEMIUM_API_MAX_EDGE:
+        return False
+    if out_w > FREEMIUM_API_MAX_EDGE or out_h > FREEMIUM_API_MAX_EDGE:
+        return False
+    return max(in_w, in_h) > FREEMIUM_API_MAX_EDGE + FREEMIUM_SHRINK_LEEWAY_PX
+
+
+def _raise_for_rmbg_429(body: str) -> None:
+    """HTTP 429 is short-term rate limit or monthly credit exhaustion (same status).
+
+    See https://www.rembg.com/en/api-usage error reference.
+    """
+    if rembg_429_is_credit_exhaustion(body):
+        raise RembgUnavailableError(
+            f"Rembg monthly/credit limit (HTTP 429): {body}"
+        )
+    raise RetryableBackgroundRemoverError(
+        f"Transient rembg API rate limit (HTTP 429): {body}"
+    )
 
 
 def membership_has_credits(payload: Dict[str, Any]) -> bool:
@@ -89,8 +177,8 @@ class RembgHostedRemover(BaseBackgroundRemover):
             bytes: Output image bytes directly from API.
 
         Raises:
-            RetryableBackgroundRemoverError: On transient network, rate limits (429), or server errors (5xx).
-            RembgUnavailableError: On rembg credits/auth (401, 402, 403).
+            RetryableBackgroundRemoverError: On transient network, rate limits (429 with credits remaining), or server errors (5xx).
+            RembgUnavailableError: On rembg credits/auth (401, 402, 403), HTTP 429 credit-exhaustion text, or HTTP 200 whose output is capped at the free API 460×460 box while the input was larger.
             NonRetryableBackgroundRemoverError: On permanent client errors (400, 404, 415, 422).
         """
         if not image_data:
@@ -132,10 +220,21 @@ class RembgHostedRemover(BaseBackgroundRemover):
                     f"Fatal request error connecting to rembg API: {e}"
                 ) from e
 
+            if response.status_code == 429:
+                _raise_for_rmbg_429(response.text)
             raise_for_rembg_status(response.status_code, response.text, context="API")
 
             if not response.content:
                 raise NonRetryableBackgroundRemoverError("rembg API returned empty response content.")
+
+            if output_is_freemium_capped(image_data, response.content):
+                in_size = image_pixel_size(image_data)
+                out_size = image_pixel_size(response.content)
+                raise RembgUnavailableError(
+                    "Rembg returned free-tier max resolution 460x460 "
+                    f"(input={in_size[0]}x{in_size[1]}, output={out_size[0]}x{out_size[1]}); "
+                    "treat as out of credits and do not use the image"
+                )
 
             return response.content
 

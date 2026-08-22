@@ -45,6 +45,12 @@ variable "rembg_api_key" {
 
 variable "alert_email" {
   type        = string
-  description = "Email for rembg circuit-open alerts. Empty string skips the Monitoring notification channel."
+  description = "Optional email for circuit alerts (open/close, no 24h nag). Empty string skips the email channel."
+  default     = ""
+}
+
+variable "alert_sms" {
+  type        = string
+  description = "E.164 SMS number for circuit alerts (e.g. +15555550100). Empty string skips the SMS channel."
   default     = ""
 }

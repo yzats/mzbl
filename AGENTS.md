@@ -23,8 +23,8 @@
    - Executes only **3 GraphQL calls TOTAL per product run**: `productCreateMediaBatch`, `productReorderMedia`, and `productUpdateMediaBatch`.
 
 4. **Error Classification & Retries:**
-   - **Rembg unavailable** (401/402/403) raises `RembgUnavailableError` $\rightarrow$ pause `bg-remover-queue`, worker **HTTP 503** (task stays). Probe `rembg_circuit_probe` every 5 minutes (`GET /api/membership-usage`) resumes when `credits` or `prepaidCredits` is $> 0$. Log `[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]` for alerting (email at most once per 24h).
-   - **Retryable rembg** (429, 5xx, timeout) raises `RetryableBackgroundRemoverError` $\rightarrow$ in-process retries, then pause queue + **HTTP 503**.
+   - **Rembg unavailable** (401/402/403, monthly-limit 429 text, or HTTP 200 whose output fits the free API **460×460** box while the source longest side is **> 468**) raises `RembgUnavailableError` $\rightarrow$ pause `bg-remover-queue`, worker **HTTP 503**. A 2000→1000 shrink is **not** unavailable. Probe `rembg_circuit_probe` every 5 minutes (`GET /api/membership-usage`) resumes when `credits` or `prepaidCredits` is $> 0$. Log `[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]`; metric alert SMS/email on open and close (no 24h nag).
+   - **Retryable rembg** (429 short-term rate limit, 5xx, timeout) raises `RetryableBackgroundRemoverError` $\rightarrow$ in-process retries, then pause queue + **HTTP 503**. HTTP 429 whose `error` / `details[].message` contains `monthly limit` or `purchasing` is `RembgUnavailableError` instead (no extra membership-usage call).
    - **Retryable Shopify** raises `RetryableShopifyError` $\rightarrow$ **HTTP 503** without pausing the rembg queue.
    - **Non-Retryable Errors** (400 bad payload, corrupted file, product 404) raise `NonRetryableBackgroundRemoverError` / `NonRetryableShopifyError` $\rightarrow$ **HTTP 400**, queue stays running.
 
@@ -32,7 +32,7 @@
 
 ## 🧪 Testing Requirement
 
-Always verify that all 40 unit tests pass after any change:
+Always verify that all 59 unit tests pass after any change:
 
 ```bash
 PYTHONPATH=shopify-tools/bg-remover:shopify-tools uv run pytest shopify-tools/bg-remover/tests

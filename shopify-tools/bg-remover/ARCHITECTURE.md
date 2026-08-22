@@ -102,7 +102,7 @@ All major subsystems use abstract interfaces to support provider swapping (e.g. 
   - Sends raw image bytes to rembg API (`https://api.rembg.com/rmbg`).
   - **No `height` parameter is sent** — lets rembg perform default image processing and sizing.
   - Formats payloads with `format="png"` and `bg_color="#ffffff"`.
-  - Classifies errors into `RetryableBackgroundRemoverError` (503, 429, timeouts) vs `NonRetryableBackgroundRemoverError` (400, 401).
+  - Classifies HTTP errors (`RetryableBackgroundRemoverError`, `RembgUnavailableError`, `NonRetryableBackgroundRemoverError`). On HTTP 200, rejects free-tier **460×460** API output via `output_is_freemium_capped` (see below).
 
 ### B. Task Dispatcher Interface (`src/queue/`)
 - **`BaseTaskDispatcher` (`base.py`)**:
@@ -150,14 +150,41 @@ The background remover client (`RembgHostedRemover`) categorizes rembg API respo
 #### Status Code & Exception Mapping (`rembg_http.py`):
 | HTTP Status / Condition | Exception Raised | Worker Response | Retry Strategy |
 | :--- | :--- | :--- | :--- |
-| **HTTP 200 OK** | None (Returns image bytes) | HTTP 200 Success | None |
-| **HTTP 429 (Rate Limit)** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** | In-process backoff, then pause `bg-remover-queue`. Task stays until probe resumes. |
+| **HTTP 200 OK (paid-size output)** | None (Returns image bytes) | HTTP 200 Success | None |
+| **HTTP 200, output fits 460×460, and input longest side > 468** | `RembgUnavailableError` | Pause queue + **HTTP 503** | Free API cap per [pricing](https://www.rembg.com/en/pricing). Do not upload. Leeway is on input vs 460 (461–468 into the box is allowed), not an isolated shrink delta. Originals already ≤ 460×460 are not flagged. |
+| **HTTP 429 short-term / daily rate limit** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** after in-process retries | Parse JSON `error` and `details[].message` ([api-usage](https://www.rembg.com/en/api-usage)). If the text does **not** match credit exhaustion, treat as rate limit. |
+| **HTTP 429 monthly / credits** | `RembgUnavailableError` | Pause queue + **HTTP 503** | Same JSON shapes; if any message contains `monthly limit` **or** `purchasing` (e.g. "You've reached your monthly limit. Consider purchasing more credits."), no in-process `/rmbg` retries. |
 | **HTTP 500, 502, 503, 504** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** | Same as 429. |
 | **Network Timeout / Connection Error** | `RetryableBackgroundRemoverError` | Pause queue + **HTTP 503** | Same as 429. |
 | **HTTP 400 (Bad Request / Corrupted)** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Queue stays running. |
 | **HTTP 401, 402, 403 (credits / auth)** | `RembgUnavailableError` | Pause queue + **HTTP 503** | No in-process retry. Pause Cloud Tasks; do not ack the task. |
 | **HTTP 404, 415, 422** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** Queue stays running. |
 | **Empty Input / Empty Response Bytes** | `NonRetryableBackgroundRemoverError` | **HTTP 400** | **NO RETRY.** |
+
+#### Free-tier 200 detection (`output_is_freemium_capped`)
+
+When credits run out, rembg may still return HTTP 200 with a downscaled image ([pricing](https://www.rembg.com/en/pricing): Free API max **460×460**). Constants: `FREEMIUM_API_MAX_EDGE = 460`, `FREEMIUM_SHRINK_LEEWAY_PX = 8`.
+
+Treat as **out of credits** (`RembgUnavailableError`, do not upload) only if **all** of the following hold:
+
+1. Input and output bytes both decode as images.
+2. Input does **not** already fit in 460×460 (at least one side > 460).
+3. Output **does** fit entirely in 460×460 (`out_w ≤ 460` and `out_h ≤ 460`).
+4. Input longest side is **> 468** (`460 + 8`).
+
+Otherwise keep the image. In particular **2000→1000** is not freemium (1000 is outside the free box). **461→460** and **468→460** are allowed (source only barely above the cap).
+
+| Input | Output | Freemium? |
+| :--- | :--- | :--- |
+| 800×600 | 460×460 or 460×400 | Yes |
+| 2000×2000 | 460×460 | Yes |
+| 469×469 | 460×460 | Yes |
+| 2000×2000 | 1000×1000 | No |
+| 800×600 | 800×600 | No |
+| 400×300 | 400×300 | No |
+| 461×461 or 468×468 | 460×460 | No |
+| 2000×2000 | 461×461 | No (outside free box) |
+| Unreadable bytes | any | No (skip check) |
 
 ---
 
@@ -283,7 +310,7 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
     maxBackoff: 300s
     maxDoublings: 3
   ```
-- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused** (single `print` via `emit_circuit_log`; no matching `logger.*` so Cloud Run does not duplicate the line). Optional email (`alert_email`): log-based alert rate-limited to **once per 24 hours** while those logs continue. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
+- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused** (single `print` via `emit_circuit_log`; no matching `logger.*` so Cloud Run does not duplicate the line). Optional `alert_sms` (E.164) and/or `alert_email`: metric alert on those logs (5-minute buckets). SMS/email on **open** and **close**; the incident **closes ~5 minutes after resume** when STILL OPEN logs stop. No 24-hour nag. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
 
 ---
 
@@ -485,7 +512,7 @@ The Cloud Tasks service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.g
 
 The Cloud Scheduler service agent is created with `google_project_service_identity` (`service-{PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com`; enabling the API alone does not always create it) and gets `roles/iam.serviceAccountUser` on `bg-remover-sa` so the 5-minute probe can mint an OIDC token.
 
-Terraform also creates log-based metric `bg_remover_circuit_open` (`[CIRCUIT OPEN]`) and, when `alert_email` is set, a **log-based** alert on `[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]` with `notification_rate_limit` **86400s** (email at most once per 24h while the circuit stays open). Manual resume: `gcloud tasks queues resume bg-remover-queue --location=us-central1`.
+Terraform also creates log-based metric `bg_remover_circuit_open` (`[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]`). When `alert_sms` and/or `alert_email` is set, a **metric** alert fires on open and closes after ~5 minutes with no matching logs (queue resumed; probe no longer logs STILL OPEN). SMS uses E.164 (`alert_sms = "+1…"`); GCP sends a verification text. Manual resume: `gcloud tasks queues resume bg-remover-queue --location=us-central1`.
 
 #### 3. Token Refresh / Expiration Behavior
 - The `GITHUB_TOKEN` PAT is **ONLY used locally when running `terraform apply`**.
