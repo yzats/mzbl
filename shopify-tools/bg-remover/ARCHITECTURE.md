@@ -483,7 +483,7 @@ Runtime service account `bg-remover-sa` IAM:
 
 The Cloud Tasks service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.gserviceaccount.com`) gets `roles/iam.serviceAccountTokenCreator` on `bg-remover-sa` so OIDC-authenticated worker invocations succeed.
 
-The Cloud Scheduler service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com`) gets `roles/iam.serviceAccountUser` on `bg-remover-sa` so the 6-hour probe can mint an OIDC token.
+The Cloud Scheduler service agent is created with `google_project_service_identity` (`service-{PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com`; enabling the API alone does not always create it) and gets `roles/iam.serviceAccountUser` on `bg-remover-sa` so the 5-minute probe can mint an OIDC token.
 
 Terraform also creates log-based metric `bg_remover_circuit_open` (`[CIRCUIT OPEN]`) and, when `alert_email` is set, a **log-based** alert on `[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]` with `notification_rate_limit` **86400s** (email at most once per 24h while the circuit stays open). Manual resume: `gcloud tasks queues resume bg-remover-queue --location=us-central1`.
 

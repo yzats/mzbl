@@ -9,10 +9,19 @@ terraform {
       source  = "integrations/github"
       version = "~> 6.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 5.0"
+    }
   }
 }
 
 provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
+}
+
+provider "google-beta" {
   project = var.gcp_project_id
   region  = var.gcp_region
 }
@@ -285,10 +294,20 @@ resource "google_service_account_iam_member" "cloudtasks_token_creator" {
   member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
 }
 
+# Enabling the Scheduler API does not always create the Google-managed agent
+# until generateServiceIdentity runs.
+resource "google_project_service_identity" "cloudscheduler" {
+  provider = google-beta
+  project  = var.gcp_project_id
+  service  = "cloudscheduler.googleapis.com"
+
+  depends_on = [google_project_service.required_services]
+}
+
 resource "google_service_account_iam_member" "scheduler_act_as_runtime" {
   service_account_id = google_service_account.bg_remover_sa.name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  member             = "serviceAccount:${google_project_service_identity.cloudscheduler.email}"
 }
 
 resource "google_service_account_iam_member" "gcf_robot_build_sa_user" {
