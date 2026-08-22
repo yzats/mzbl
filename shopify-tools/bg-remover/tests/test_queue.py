@@ -8,7 +8,7 @@ from src.queue.gcp_dispatcher import GCPCloudTasksDispatcher, named_task_id
 from src.queue.firestore_stores import GCPFirestoreLockStore, firestore_document_id
 from src.removers import RembgUnavailableError, NonRetryableBackgroundRemoverError
 from src.shopify import RetryableShopifyError
-from src.queue.circuit_probe import probe_rembg_and_resume
+from src.queue.circuit_probe import probe_rembg_and_resume, _rembg_key
 from src.queue.worker import execute_background_removal_job
 
 
@@ -239,10 +239,14 @@ def test_probe_keeps_circuit_open_when_rembg_fails(mocker):
         "Rembg account has no usable credits (credits=0, prepaidCredits=0)"
     )
     resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
-    pause = mocker.patch("src.queue.circuit_probe.pause_product_queue", return_value=False)
     mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
 
     result = probe_rembg_and_resume()
     assert result["status"] == "open"
     resume.assert_not_called()
-    pause.assert_called_once()
+
+
+def test_rembg_key_prefers_env_over_config(monkeypatch):
+    monkeypatch.setenv("REMBG_API_KEY", " env-secret-key ")
+    assert _rembg_key() == "env-secret-key"
+

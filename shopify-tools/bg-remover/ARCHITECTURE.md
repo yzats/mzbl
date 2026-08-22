@@ -283,7 +283,7 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
     maxBackoff: 300s
     maxDoublings: 3
   ```
-- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the worker calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). Logs `[CIRCUIT OPEN]` on a new pause and `[CIRCUIT STILL OPEN]` while rembg stays down. Optional email (`alert_email`): log-based alert rate-limited to **once per 24 hours** while those logs continue. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
+- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused**. Optional email (`alert_email`): log-based alert rate-limited to **once per 24 hours** while those logs continue. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
 
 ---
 
@@ -352,7 +352,7 @@ shopify-tools/
     │   │   ├── local_dispatcher.py      # LocalTaskDispatcher (thread-based)
     │   │   ├── gcp_dispatcher.py        # GCPCloudTasksDispatcher (Cloud Tasks Named Tasks)
     │   │   ├── queue_control.py         # Pause/resume bg-remover-queue (rembg circuit)
-    │   │   ├── circuit_probe.py         # rembg_circuit_probe HTTP Cloud Function
+    │   │   ├── circuit_probe.py         # rembg_circuit_probe; env-first REMBG_API_KEY; resume only
     │   │   └── worker.py                # bg_remover_worker HTTP Cloud Function entrypoint
     │   └── webhooks/
     │       ├── hmac_verifier.py         # verify_shopify_hmac() signature verifier

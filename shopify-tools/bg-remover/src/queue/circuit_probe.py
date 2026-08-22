@@ -12,7 +12,6 @@ from flask import Request
 from src.queue.queue_control import (
     CIRCUIT_STILL_OPEN_LOG,
     is_product_queue_paused,
-    pause_product_queue,
     resume_product_queue,
 )
 from src.removers import (
@@ -27,11 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 def _rembg_key() -> str:
+    """Prefer Secret Manager / env (production), then local config.py."""
+    env_key = (os.environ.get("REMBG_API_KEY") or "").strip()
+    if env_key:
+        return env_key
     try:
         import config
-        return getattr(config, "REMBG_API_KEY", "") or ""
+        return str(getattr(config, "REMBG_API_KEY", "") or "").strip()
     except ImportError:
-        return os.environ.get("REMBG_API_KEY", "")
+        return ""
 
 
 def probe_rembg_and_resume() -> Dict[str, Any]:
@@ -41,11 +44,14 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
     try:
         usage = remover.check_account_ready()
     except (RembgUnavailableError, RetryableBackgroundRemoverError) as e:
-        msg = f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {e}"
-        print(msg, flush=True)
-        logger.error(msg)
-        pause_product_queue(str(e))
-        return {"status": "open", "reason": str(e), "paused": is_product_queue_paused()}
+        paused = is_product_queue_paused()
+        if paused:
+            msg = f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {e}"
+            print(msg, flush=True)
+            logger.error(msg)
+        else:
+            logger.warning("Rembg probe failed while queue is not paused: %s", e)
+        return {"status": "open", "reason": str(e), "paused": paused}
 
     resumed = resume_product_queue()
     return {
