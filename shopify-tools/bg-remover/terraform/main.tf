@@ -101,9 +101,9 @@ resource "google_cloud_tasks_queue" "bg_remover_queue" {
   }
 
   retry_config {
-    max_attempts = 5
-    min_backoff  = "5s"
-    max_backoff  = "300s"
+    max_attempts  = 5
+    min_backoff   = "5s"
+    max_backoff   = "300s"
     max_doublings = 3
   }
 
@@ -183,6 +183,12 @@ resource "google_project_iam_member" "sa_cloudtasks_enqueuer" {
 resource "google_project_iam_member" "sa_cloudtasks_queue_admin" {
   project = var.gcp_project_id
   role    = "roles/cloudtasks.queueAdmin"
+  member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
+}
+
+resource "google_project_iam_member" "sa_monitoring_metric_writer" {
+  project = var.gcp_project_id
+  role    = "roles/monitoring.metricWriter"
   member  = "serviceAccount:${google_service_account.bg_remover_sa.email}"
 }
 
@@ -393,7 +399,7 @@ resource "google_monitoring_alert_policy" "circuit_open" {
   }
 
   alert_strategy {
-    auto_close = "1800s"
+    auto_close           = "1800s"
     notification_prompts = ["OPENED", "CLOSED"]
   }
 

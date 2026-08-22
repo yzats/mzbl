@@ -13,3 +13,8 @@ output "firestore_database_id" {
   value       = google_firestore_database.database.id
   description = "ID of the provisioned Firestore Native database"
 }
+
+output "bg_remover_dashboard_id" {
+  value       = google_monitoring_dashboard.bg_remover.id
+  description = "Cloud Monitoring dashboard resource name (projects/.../dashboards/...)"
+}

@@ -219,31 +219,103 @@ def test_worker_does_not_pause_on_shopify_rate_limit(mocker):
 def test_probe_resumes_queue_when_rembg_ok(mocker):
     mocker.patch(
         "src.queue.circuit_probe.RembgHostedRemover"
-    ).return_value.check_account_ready.return_value = {
+    ).return_value.get_membership_usage.return_value = {
         "credits": 12,
         "prepaidCredits": 0,
     }
+    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
     resume = mocker.patch("src.queue.circuit_probe.resume_product_queue", return_value=True)
 
     result = probe_rembg_and_resume()
     assert result["status"] == "closed"
     assert result["resumed"] is True
     assert result["credits"] == 12
+    gauges.assert_called_once_with({"credits": 12, "prepaidCredits": 0})
     resume.assert_called_once()
 
 
 def test_probe_keeps_circuit_open_when_rembg_fails(mocker):
     mocker.patch(
         "src.queue.circuit_probe.RembgHostedRemover"
-    ).return_value.check_account_ready.side_effect = RembgUnavailableError(
+    ).return_value.get_membership_usage.side_effect = RembgUnavailableError(
         "Rembg account has no usable credits (credits=0, prepaidCredits=0)"
     )
+    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
     resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
     mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
 
     result = probe_rembg_and_resume()
     assert result["status"] == "open"
+    gauges.assert_not_called()
     resume.assert_not_called()
+
+
+def test_probe_writes_zero_credit_gauges_when_account_empty(mocker):
+    usage = {"credits": 0, "prepaidCredits": 0}
+    mocker.patch(
+        "src.queue.circuit_probe.RembgHostedRemover"
+    ).return_value.get_membership_usage.return_value = usage
+    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "open"
+    assert result["credits"] == 0
+    gauges.assert_called_once_with(usage)
+    resume.assert_not_called()
+
+
+def test_worker_increments_images_processed(mocker):
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "test.myshopify.com")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
+    mock_client = MagicMock()
+    mock_client.get_unprocessed_images.return_value = [
+        {"media_id": "gid://shopify/MediaImage/1", "url": "https://cdn.example/x.jpg"}
+    ]
+    mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    mocker.patch("src.queue.worker.RembgHostedRemover")
+    mocker.patch("process_product.process_product_batch", return_value=2)
+    increment = mocker.patch("src.queue.worker.increment_images_processed")
+
+    payload = {"product_id": "gid://shopify/Product/12345", "shop_domain": "test.myshopify.com"}
+    res_dict, status_code = execute_background_removal_job(payload)
+
+    assert status_code == 200
+    assert res_dict["processed_count"] == 2
+    increment.assert_called_once_with(2)
+
+
+def test_custom_metrics_forward_gauges_and_counter(mocker):
+    from src.queue.custom_metrics import (
+        CREDITS_METRIC,
+        IMAGES_PROCESSED_METRIC,
+        PREPAID_CREDITS_METRIC,
+        increment_images_processed,
+        write_rembg_credit_gauges,
+    )
+
+    write = mocker.patch("src.queue.custom_metrics._write_int_point")
+    write_rembg_credit_gauges({"credits": 9, "prepaidCredits": 2})
+    increment_images_processed(3)
+    write.assert_any_call(CREDITS_METRIC, 9)
+    write.assert_any_call(PREPAID_CREDITS_METRIC, 2)
+    write.assert_any_call(IMAGES_PROCESSED_METRIC, 3)
+
+
+def test_increment_images_processed_skips_zero(mocker):
+    from src.queue.custom_metrics import increment_images_processed
+
+    write = mocker.patch("src.queue.custom_metrics._write_int_point")
+    increment_images_processed(0)
+    write.assert_not_called()
+
+
+def test_write_int_point_skips_without_project(monkeypatch):
+    from src.queue.custom_metrics import _write_int_point
+
+    monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
+    _write_int_point("custom.googleapis.com/bg_remover/rembg_credits", 1)
 
 
 def test_rembg_key_prefers_env_over_config(monkeypatch):

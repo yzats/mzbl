@@ -283,3 +283,31 @@ def test_rembg_200_half_size_not_freemium(mocker):
     remover = RembgHostedRemover(api_url="https://api.rembg.com/rmbg")
     assert remover.remove_background(src) == out
 
+
+def test_fault_inject_out_of_credits_skips_rmbg(monkeypatch, mocker):
+    monkeypatch.setenv("REMBG_FAULT_INJECT", "out_of_credits")
+    post = mocker.patch("requests.post")
+    remover = RembgHostedRemover(api_url="https://api.rembg.com/rmbg")
+    with pytest.raises(RembgUnavailableError, match="monthly/credit limit"):
+        remover.remove_background(b"fake_jpeg_data")
+    post.assert_not_called()
+
+
+def test_fault_inject_out_of_credits_membership_zeros(monkeypatch, mocker):
+    monkeypatch.setenv("REMBG_FAULT_INJECT", "out_of_credits")
+    get = mocker.patch("requests.get")
+    remover = RembgHostedRemover(api_key="secret-token")
+    assert remover.get_membership_usage() == {"credits": 0, "prepaidCredits": 0}
+    get.assert_not_called()
+    with pytest.raises(RembgUnavailableError, match="no usable credits"):
+        remover.check_account_ready()
+    get.assert_not_called()
+
+
+def test_fault_inject_other_value_uses_http(monkeypatch, mocker):
+    monkeypatch.setenv("REMBG_FAULT_INJECT", "rate_limit")
+    mocker.patch("requests.post", return_value=MagicMock(status_code=200, content=b"ok"))
+    remover = RembgHostedRemover(api_url="https://api.rembg.com/rmbg")
+    assert remover.remove_background(b"fake_jpeg_data") == b"ok"
+    requests.post.assert_called_once()
+

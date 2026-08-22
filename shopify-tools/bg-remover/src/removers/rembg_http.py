@@ -1,4 +1,5 @@
 import json
+import os
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,6 +22,22 @@ FREEMIUM_API_MAX_EDGE = 460
 FREEMIUM_SHRINK_LEEWAY_PX = 8
 # https://www.rembg.com/en/api-usage — monthly credits 429 vs short-term rate limit 429
 _CREDIT_EXHAUSTION_NEEDLES = ("monthly limit", "purchasing")
+FAULT_INJECT_ENV = "REMBG_FAULT_INJECT"
+FAULT_OUT_OF_CREDITS = "out_of_credits"
+FAULT_INJECT_LOG = "[FAULT INJECT] rembg out_of_credits"
+_FAULT_CREDIT_429_BODY = (
+    '{"error":"You\'ve reached your monthly limit. Consider purchasing more credits.",'
+    '"status":429}'
+)
+
+
+def rembg_fault_inject() -> str:
+    """Runtime fault flag from REMBG_FAULT_INJECT (empty if unset)."""
+    return (os.environ.get(FAULT_INJECT_ENV) or "").strip().lower()
+
+
+def rembg_out_of_credits_fault() -> bool:
+    return rembg_fault_inject() == FAULT_OUT_OF_CREDITS
 
 
 def rembg_error_message_texts(body: str) -> List[str]:
@@ -184,6 +201,12 @@ class RembgHostedRemover(BaseBackgroundRemover):
         if not image_data:
             raise NonRetryableBackgroundRemoverError("Input image bytes cannot be empty.")
 
+        if rembg_out_of_credits_fault():
+            print(FAULT_INJECT_LOG, flush=True)
+            raise RembgUnavailableError(
+                f"Rembg monthly/credit limit (HTTP 429): {FAULT_INJECT_LOG} {_FAULT_CREDIT_429_BODY}"
+            )
+
         @retry_with_exponential_backoff(
             retries=self.max_retries,
             backoff_in_seconds=self.backoff_delay,
@@ -245,6 +268,10 @@ class RembgHostedRemover(BaseBackgroundRemover):
 
         See https://www.rembg.com/api/docs#tag/account
         """
+        if rembg_out_of_credits_fault():
+            print(FAULT_INJECT_LOG, flush=True)
+            return {"credits": 0, "prepaidCredits": 0}
+
         headers = {}
         if self.api_key:
             headers["x-api-key"] = self.api_key

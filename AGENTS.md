@@ -32,7 +32,7 @@
 
 ## 🧪 Testing Requirement
 
-Always verify that all 59 unit tests pass after any change:
+Always verify that all 67 unit tests pass after any change:
 
 ```bash
 PYTHONPATH=shopify-tools/bg-remover:shopify-tools uv run pytest shopify-tools/bg-remover/tests

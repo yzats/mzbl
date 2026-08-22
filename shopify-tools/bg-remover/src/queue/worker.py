@@ -37,6 +37,7 @@ from src.removers import (
     RetryableBackgroundRemoverError,
     RembgUnavailableError,
 )
+from src.queue.custom_metrics import increment_images_processed
 from src.queue.memory_stores import InMemoryLockStore
 from src.queue.queue_control import pause_product_queue
 
@@ -117,6 +118,7 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
         )
 
         logger.info(f"Successfully processed {processed_count} image(s) for product {product_id}.")
+        increment_images_processed(processed_count)
         return {"status": "success", "processed_count": processed_count}, 200
 
     except (ShopifyAPIError, BackgroundRemoverError) as e:

@@ -310,7 +310,25 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
     maxBackoff: 300s
     maxDoublings: 3
   ```
-- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused** (single `print` via `emit_circuit_log`; no matching `logger.*` so Cloud Run does not duplicate the line). Optional `alert_sms` (E.164) and/or `alert_email`: metric alert on those logs (5-minute buckets). SMS/email on **open** and **close**; the incident **closes ~5 minutes after resume** when STILL OPEN logs stop. No 24-hour nag. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
+- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 (immediately) or 429/5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` and `resume_queue` when the account is reachable and `credits > 0` **or** `prepaidCredits > 0` (no image is processed). After a JSON usage payload is parsed, the probe writes custom gauges `custom.googleapis.com/bg_remover/rembg_credits` and `.../rembg_prepaid_credits` (including zeros; fail-open). The worker increments `.../images_processed` after a successful batch. Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused** (single `print` via `emit_circuit_log`; no matching `logger.*` so Cloud Run does not duplicate the line). Optional `alert_sms` (E.164) and/or `alert_email`: metric alert on those logs (5-minute buckets). SMS/email on **open** and **close**; the incident **closes ~5 minutes after resume** when STILL OPEN logs stop. No 24-hour nag. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
+
+**Out-of-credits fault inject:** set `REMBG_FAULT_INJECT=out_of_credits` at request time in `RembgHostedRemover` (not in Terraform or `deploy_gcp.sh`). `/rmbg` raises `RembgUnavailableError` without calling rembg; membership-usage returns `{credits: 0, prepaidCredits: 0}`. Logs `[FAULT INJECT] rembg out_of_credits`. Toggle both Gen2 Cloud Run services so the probe cannot resume while the worker is faulted. Next `deploy_gcp.sh` `--set-env-vars` replace-all **clears** the flag.
+
+```bash
+for svc in bg-remover-worker rembg-circuit-probe; do
+  gcloud run services update "$svc" --region=us-central1 --project=mzbl-shopify-bg-remover \
+    --update-env-vars=REMBG_FAULT_INJECT=out_of_credits
+done
+```
+
+```bash
+for svc in bg-remover-worker rembg-circuit-probe; do
+  gcloud run services update "$svc" --region=us-central1 --project=mzbl-shopify-bg-remover \
+    --remove-env-vars=REMBG_FAULT_INJECT
+done
+```
+
+Local: `export REMBG_FAULT_INJECT=out_of_credits`.
 
 ---
 
@@ -380,6 +398,7 @@ shopify-tools/
     │   │   ├── gcp_dispatcher.py        # GCPCloudTasksDispatcher (Cloud Tasks Named Tasks)
     │   │   ├── queue_control.py         # Pause/resume bg-remover-queue (rembg circuit)
     │   │   ├── circuit_probe.py         # rembg_circuit_probe; env-first REMBG_API_KEY; resume only
+    │   │   ├── custom_metrics.py        # Cloud Monitoring gauges/counters (fail open)
     │   │   └── worker.py                # bg_remover_worker HTTP Cloud Function entrypoint
     │   └── webhooks/
     │       ├── hmac_verifier.py         # verify_shopify_hmac() signature verifier
@@ -505,6 +524,7 @@ Runtime service account `bg-remover-sa` IAM:
 - `roles/cloudtasks.enqueuer`
 - `roles/cloudtasks.taskRunner`
 - `roles/cloudtasks.queueAdmin` (pause/resume `bg-remover-queue` on rembg circuit open/close)
+- `roles/monitoring.metricWriter` (custom gauges/counters from probe and worker)
 - `roles/iam.serviceAccountUser` **on itself** (`iam.serviceAccounts.actAs`) so `create_task` can attach an OIDC token for `bg-remover-sa`
 - Secret accessor on `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY`
 
@@ -513,6 +533,27 @@ The Cloud Tasks service agent (`service-{PROJECT_NUMBER}@gcp-sa-cloudtasks.iam.g
 The Cloud Scheduler service agent is created with `google_project_service_identity` (`service-{PROJECT_NUMBER}@gcp-sa-cloudscheduler.iam.gserviceaccount.com`; enabling the API alone does not always create it) and gets `roles/iam.serviceAccountUser` on `bg-remover-sa` so the 5-minute probe can mint an OIDC token.
 
 Terraform also creates log-based metric `bg_remover_circuit_open` (`[CIRCUIT OPEN]` / `[CIRCUIT STILL OPEN]`). When `alert_sms` and/or `alert_email` is set, a **metric** alert fires on open and closes after ~5 minutes with no matching logs (queue resumed; probe no longer logs STILL OPEN). SMS uses E.164 (`alert_sms = "+1…"`); GCP sends a verification text. Manual resume: `gcloud tasks queues resume bg-remover-queue --location=us-central1`.
+
+#### Cloud Monitoring dashboard (`terraform/dashboard.tf`)
+
+After `terraform apply`, open **Monitoring → Dashboards → BG Remover** (or `terraform output bg_remover_dashboard_id`). Tiles are **time series** (dashboard time picker: 1h / 6h / 1d / 1w). Custom log metrics are typically retained ~6 weeks.
+
+**Hybrid metrics:** platform Cloud Run / Cloud Tasks series first; **log-based DELTA counters** for sparse print tags already used by the circuit alert; **custom Monitoring metrics** (`src/queue/custom_metrics.py`, fail-open, no OTel collector) only for values that are not “a log line appeared.” Circuit SMS/email stays log-based on `bg_remover_circuit_open`. Rembg vs Shopify latency histograms are not instrumented (worker p95 is enough).
+
+| Tile | Source | How to read |
+| :--- | :--- | :--- |
+| Circuit open / still open | `logging.googleapis.com/user/bg_remover_circuit_open` | Non-zero while the queue is paused (same series as the SMS alert). |
+| Circuit closed | `bg_remover_circuit_closed` (`[CIRCUIT CLOSED]`) | Resume events (probe or manual). |
+| Queue depth | `cloudtasks.googleapis.com/queue/depth` | Rises while paused or the worker is slow; receiver can still enqueue. |
+| Task attempts | `cloudtasks.googleapis.com/queue/task_attempt_count` | Worker invocations / retries (Shopify 503 vs rembg pause). |
+| Probe HTTP | Cloud Run `request_count` on `rembg-circuit-probe` | 200 = rembg+credits OK; 503 = membership-usage failed. |
+| Worker HTTP | Cloud Run `request_count` on `bg-remover-worker` | 200 success/skip; 400 poison; 503 circuit or Shopify retry. |
+| Receiver HTTP | Cloud Run `request_count` on `shopify-webhook-receiver` | 401 HMAC; 200 includes success, ignore, and dedup. |
+| Enqueue vs dedup | `bg_remover_task_enqueued` / `bg_remover_task_deduped` | `[TASK ENQUEUED]` vs `[TASK DEDUPED]` / `[200 DEDUPED]`. |
+| Webhook-id vs lock skip | `bg_remover_webhook_id_skip` / `bg_remover_lock_skip` | Layer-1 Shopify retries vs Layer-3 product lock. |
+| Worker latency p50/p95 | Cloud Run `request_latencies` | Watch vs the 120s worker timeout. |
+| Rembg credits remaining | `custom.googleapis.com/bg_remover/rembg_credits` and `.../rembg_prepaid_credits` | Gauges written by `rembg_circuit_probe` from membership-usage JSON (including zeros). |
+| Images processed | `custom.googleapis.com/bg_remover/images_processed` | Worker DELTA after a successful batch (`processed_count` > 0). |
 
 #### 3. Token Refresh / Expiration Behavior
 - The `GITHUB_TOKEN` PAT is **ONLY used locally when running `terraform apply`**.
