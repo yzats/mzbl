@@ -80,29 +80,30 @@ class GCPFirestoreDedupStore(BaseDedupStore):
             self.db = None
             applog.warning(f"FirestoreDedupStore client unavailable ({e}); operating in mock mode.")
 
-    def is_duplicate(self, key: str, ttl_seconds: int = 300) -> bool:
+    def was_seen(self, key: str, ttl_seconds: int = 300) -> bool:
         if not key or not self.db:
             return False
-
         import time
-        doc_ref = self.db.collection(self.collection_name).document(firestore_document_id(key))
-        now = time.time()
-
         try:
-            doc = doc_ref.get()
-            if doc.exists:
-                data = doc.to_dict() or {}
-                expires_at = data.get("expires_at", 0)
-                if now < expires_at:
-                    return True  # Duplicate event
+            doc = self.db.collection(self.collection_name).document(firestore_document_id(key)).get()
+            if not doc.exists:
+                return False
+            data = doc.to_dict() or {}
+            return time.time() < data.get("expires_at", 0)
+        except Exception as e:
+            applog.warning(f"Firestore was_seen error for {key}: {e}")
+            return False
 
-            # Mark key seen with TTL
-            doc_ref.set({
+    def remember(self, key: str, ttl_seconds: int = 300) -> None:
+        if not key or not self.db:
+            return
+        import time
+        now = time.time()
+        try:
+            self.db.collection(self.collection_name).document(firestore_document_id(key)).set({
                 "key": key,
                 "created_at": now,
                 "expires_at": now + ttl_seconds,
             })
-            return False
         except Exception as e:
-            applog.warning(f"Firestore is_duplicate error for {key}: {e}")
-            return False
+            applog.warning(f"Firestore remember error for {key}: {e}")

@@ -82,7 +82,7 @@ Layer 4: Media-Level Alt Text Guard (get_unprocessed_images)
 ```
 
 ### Layer Details:
-1. **Layer 1 (Receiver Level):** Tracks `X-Shopify-Webhook-Id` headers. If Shopify re-sends an identical webhook event within 5 minutes, the receiver logs `[200 SKIPPED]` at WARNING, returns `"status": "ignored"`.
+1. **Layer 1 (Receiver Level):** Verifies `X-Shopify-Hmac-Sha256` **first**. Only then does it consult `X-Shopify-Webhook-Id`. Failed HMAC must not record the id (`was_seen` / `remember`, not mark-on-read `is_duplicate`). If Shopify re-sends the same id within 5 minutes, the receiver logs `[200 SKIPPED]`, returns `"status": "ignored"`.
 2. **Layer 2 (Queue Level):** In GCP, task names are `projects/.../tasks/task-product-{clean_pid}-{pid_hash}-{update_hash}`. `update_hash` is SHA-256[:12] of Shopify `updated_at` (fallback: webhook id, then a 30-second time bucket). Cloud Tasks uniqueness therefore drops **duplicate deliveries of the same product revision** while a task is queued/running, without blocking a new image upload an hour later. Completed names remain tombstoned for ~1 hour, but only for that revision's name. A hit logs `[TASK DEDUPED]` / `[200 DEDUPED]` at WARNING and returns `"status": "deduplicated"`.
 3. **Layer 3 (Worker Level):** A distributed lock `lock:product:{product_id}` is acquired before worker processing begins. If another worker thread is actively processing the same product, the new worker logs `Product lock active` and terminates cleanly (HTTP 200).
 4. **Layer 4 (Media State Level):** The worker queries Shopify GraphQL for live product media and skips any image where `alt` contains `hide` or `bg-removed`, or where the CDN URL contains `bg-removed`. When all images are tagged, the worker exits in `<100ms`.
@@ -118,7 +118,7 @@ All major subsystems use abstract interfaces to support provider swapping (e.g. 
 - **`GCPCloudTasksDispatcher` (`gcp_dispatcher.py`)**: Named Cloud Tasks `task-product-{clean_pid}-{pid_hash}-{update_hash}` so the same Shopify `updated_at` is coalesced, but a later edit is not blocked by the 1-hour name tombstone.
 
 ### C. Lock & Deduplication Stores (`src/queue/`)
-- **`BaseLockStore` (`base.py`)** & **`BaseDedupStore` (`base.py`)**: Abstract contracts for lock acquisition and key deduplication.
+- **`BaseLockStore` (`base.py`)** & **`BaseDedupStore` (`base.py`)**: Abstract contracts for locks and webhook-id dedup (`was_seen` / `remember`; `is_duplicate` is check-then-remember).
 - **`InMemoryLockStore` & `InMemoryDedupStore` (`memory_stores.py`)**: In-memory dict-based stores with TTL expiration for local development.
 - **`GCPFirestoreLockStore` & `GCPFirestoreDedupStore` (`firestore_stores.py`)**: GCP Cloud Firestore implementations (`product_locks` and `webhook_dedup` collections) with TTL policy support. Document IDs are `firestore_document_id(key)` (SHA-256 hex) because Shopify GIDs contain `/`. Client construction catches missing credentials / import errors so unit tests and local runs without ADC do not crash.
 
@@ -288,7 +288,7 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
 | Function Name | Trigger Type | Runtime | Memory / CPU | Concurrency | Timeout | IAM Roles & Secret Access |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `shopify_webhook_receiver` | HTTP POST | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 80 | 10 seconds | `roles/cloudtasks.enqueuer`, access to `SHOPIFY_WEBHOOK_SECRET` |
-| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, `roles/cloudtasks.taskRunner`, `roles/cloudtasks.queueAdmin` (pause/resume), access to `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY` |
+| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, Cloud Tasks runner/queueAdmin, `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY`. Admin host must be `*.myshopify.com`; configured `SHOPIFY_STORE_URL` wins over task `shop_domain`. |
 | `rembg_circuit_probe` | HTTP GET/POST (Cloud Scheduler every 5 min, OIDC) | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 1 | 60 seconds | Same runtime SA; `REMBG_API_KEY`. Calls `GET https://www.rembg.com/api/membership-usage` (not `/rmbg`). **Not** a task on `bg-remover-queue`. |
 
 ---
@@ -393,6 +393,7 @@ shopify-tools/
     │   │   └── rembg_http.py            # RembgHostedRemover HTTP client implementation
     │   ├── shopify/
     │   │   ├── client.py                # ShopifyGraphQLClient (queries, mutations, batching)
+    │   │   ├── store_host.py            # Allowlist *.myshopify.com Admin host
     │   │   └── alt_helpers.py           # Alt text parsing & tag manipulation helpers
     │   ├── queue/
     │   │   ├── base.py                  # BaseTaskDispatcher, BaseLockStore, BaseDedupStore

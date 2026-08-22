@@ -63,14 +63,17 @@ class BaseDedupStore(ABC):
     """Abstract base class for webhook deduplication stores."""
 
     @abstractmethod
-    def is_duplicate(self, key: str, ttl_seconds: int = 300) -> bool:
-        """Check if key has been seen within TTL window and mark it seen.
-
-        Args:
-            key: Webhook ID or unique payload identifier.
-            ttl_seconds: Time-To-Live in seconds.
-
-        Returns:
-            bool: True if key was already seen, False if new.
-        """
+    def was_seen(self, key: str, ttl_seconds: int = 300) -> bool:
+        """True if key is already recorded and unexpired. Does not record the key."""
         pass
+
+    def remember(self, key: str, ttl_seconds: int = 300) -> None:
+        """Record key as seen for ttl_seconds. No-op if key is empty."""
+        pass
+
+    def is_duplicate(self, key: str, ttl_seconds: int = 300) -> bool:
+        """True if already seen; otherwise record the key and return False."""
+        if self.was_seen(key, ttl_seconds=ttl_seconds):
+            return True
+        self.remember(key, ttl_seconds=ttl_seconds)
+        return False

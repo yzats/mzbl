@@ -94,14 +94,16 @@ def shopify_webhook_receiver(request: Request) -> Tuple[Any, int, Dict[str, str]
     client_secret = get_webhook_secret()
     body_bytes = request.get_data()
 
-    # Check for duplicate Webhook ID
-    if webhook_id and get_deduplicator().is_duplicate(webhook_id, ttl_seconds=300):
-        applog.info(f"[200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}")
-        return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID", "webhook_id": webhook_id}), 200, {"Content-Type": "application/json"}
-
     if not verify_shopify_hmac(body_bytes, hmac_header, client_secret):
         applog.warning(f"[401 UNAUTHORIZED] HMAC failed shop={shop_header} webhook_id={webhook_id}")
         return json.dumps({"error": "Unauthorized: Invalid HMAC signature"}), 401, {"Content-Type": "application/json"}
+
+    dedup = get_deduplicator()
+    if webhook_id and dedup.was_seen(webhook_id, ttl_seconds=300):
+        applog.info(f"[200 SKIPPED] Duplicate Webhook ID detected: {webhook_id}")
+        return json.dumps({"status": "ignored", "reason": "Duplicate webhook ID", "webhook_id": webhook_id}), 200, {"Content-Type": "application/json"}
+    if webhook_id:
+        dedup.remember(webhook_id, ttl_seconds=300)
 
     try:
         payload = request.get_json(force=True, silent=True) or {}

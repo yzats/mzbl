@@ -266,6 +266,35 @@ def test_probe_writes_zero_credit_gauges_when_account_empty(mocker):
     resume.assert_not_called()
 
 
+def test_worker_rejects_non_myshopify_host(mocker):
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
+    payload = {
+        "product_id": "gid://shopify/Product/12345",
+        "shop_domain": "evil.example.com",
+    }
+    res_dict, status_code = execute_background_removal_job(payload)
+    assert status_code == 400
+    assert "Invalid Shopify store host" in res_dict["message"]
+
+
+def test_worker_uses_configured_store_not_payload_host(mocker):
+    mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "https://good.myshopify.com")
+    mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
+    mock_client = MagicMock()
+    mock_client.get_unprocessed_images.return_value = []
+    constructed = mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    mocker.patch("src.queue.worker.RembgHostedRemover")
+
+    payload = {
+        "product_id": "gid://shopify/Product/12345",
+        "shop_domain": "evil.myshopify.com",
+    }
+    res_dict, status_code = execute_background_removal_job(payload)
+    assert status_code == 200
+    assert constructed.call_args.kwargs["store_url"] == "good.myshopify.com"
+
+
 def test_worker_increments_images_processed(mocker):
     mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "test.myshopify.com")
     mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")

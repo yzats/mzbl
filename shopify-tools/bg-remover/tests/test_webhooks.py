@@ -96,7 +96,9 @@ def test_shopify_webhook_receiver_task_deduped(mocker):
     mock_dispatch.task_id = "projects/p/locations/us-central1/queues/q/tasks/task-product-111-abc"
     mock_dispatch.outcome = "deduplicated"
     mocker.patch("src.webhooks.receiver.get_dispatcher").return_value.dispatch_product_task.return_value = mock_dispatch
-    mocker.patch("src.webhooks.receiver.get_deduplicator").return_value.is_duplicate.return_value = False
+    dedup = MagicMock()
+    dedup.was_seen.return_value = False
+    mocker.patch("src.webhooks.receiver.get_deduplicator", return_value=dedup)
 
     mock_request = MagicMock()
     mock_request.method = "POST"
@@ -114,3 +116,26 @@ def test_shopify_webhook_receiver_task_deduped(mocker):
     body_json = json.loads(res)
     assert body_json["status"] == "deduplicated"
     assert "tombstoned" in body_json["reason"]
+    dedup.remember.assert_called_once()
+
+
+def test_failed_hmac_does_not_record_webhook_id(mocker):
+    from src.queue.memory_stores import InMemoryDedupStore
+
+    store = InMemoryDedupStore()
+    mocker.patch("src.webhooks.receiver.get_deduplicator", return_value=store)
+    mocker.patch("src.webhooks.receiver.get_webhook_secret", return_value="secret123")
+
+    mock_request = MagicMock()
+    mock_request.method = "POST"
+    mock_request.headers = {
+        "X-Shopify-Webhook-Id": "evt-poison-1",
+        "X-Shopify-Hmac-Sha256": "bad_signature",
+        "X-Shopify-Topic": "products/update",
+        "X-Shopify-Shop-Domain": "test.myshopify.com",
+    }
+    mock_request.get_data.return_value = b'{"id": 1}'
+
+    _, code, _ = shopify_webhook_receiver(mock_request)
+    assert code == 401
+    assert store.was_seen("evt-poison-1") is False

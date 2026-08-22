@@ -32,16 +32,17 @@ class InMemoryDedupStore(BaseDedupStore):
     def __init__(self):
         self._items: Dict[str, float] = {}  # key -> expire_timestamp
 
-    def is_duplicate(self, key: str, ttl_seconds: int = 300) -> bool:
+    def was_seen(self, key: str, ttl_seconds: int = 300) -> bool:
         if not key:
             return False
-
         now = time.time()
         if key in self._items:
             if now <= self._items[key]:
                 return True
-            else:
-                del self._items[key]
-
-        self._items[key] = now + ttl_seconds
+            del self._items[key]
         return False
+
+    def remember(self, key: str, ttl_seconds: int = 300) -> None:
+        if not key:
+            return
+        self._items[key] = time.time() + ttl_seconds

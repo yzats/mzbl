@@ -29,6 +29,7 @@ DEFAULT_BG_COLOR = _setting("DEFAULT_BG_COLOR", "#ffffff")
 DELETE_ORIGINAL = _setting("DELETE_ORIGINAL", "false").lower() == "true"
 
 from src.shopify import ShopifyGraphQLClient, ShopifyAPIError, RetryableShopifyError
+from src.shopify.store_host import resolve_shop_admin_host, shopify_admin_host
 from src.removers import (
     RembgHostedRemover,
     BackgroundRemoverError,
@@ -70,10 +71,21 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
     if not product_id:
         return {"status": "error", "message": "Missing product_id in payload"}, 400
 
-    shop_url = payload.get("shop_domain") or SHOPIFY_STORE_URL
+    payload_shop = str(payload.get("shop_domain") or "")
+    shop_url = resolve_shop_admin_host(payload_shop, SHOPIFY_STORE_URL)
+    configured_host = shopify_admin_host(SHOPIFY_STORE_URL)
+    payload_host = shopify_admin_host(payload_shop)
+    if configured_host and payload_host and payload_host != configured_host:
+        applog.warning(
+            f"Ignoring shop_domain={payload_host}; using configured store {configured_host}"
+        )
     token = SHOPIFY_ADMIN_API_ACCESS_TOKEN
 
-    if not shop_url or not token:
+    if not shop_url:
+        applog.error("Shopify store host is missing or is not a *.myshopify.com Admin host.")
+        return {"status": "error", "message": "Invalid Shopify store host"}, 400
+
+    if not token:
         applog.error("Missing Shopify credentials for background removal worker job.")
         return {"status": "error", "message": "Shopify API credentials missing"}, 500
 
