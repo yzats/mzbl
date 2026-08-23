@@ -22,6 +22,8 @@ DEFAULT_MEMBERSHIP_USAGE_URL = "https://www.rembg.com/api/membership-usage"
 
 # https://www.rembg.com/en/pricing — Free API max resolution 460×460
 FREEMIUM_API_MAX_EDGE = 460
+# Freemium included monthly credits; probe/canary require more than this, or prepaid.
+FREEMIUM_INCLUDED_CREDITS = 60
 # Ignore sources only slightly above 460 (e.g. 461→460). Freemium is a large original stuffed into 460×460.
 FREEMIUM_SHRINK_LEEWAY_PX = 8
 # https://www.rembg.com/en/api-usage — monthly credits 429 vs short-term rate limit 429
@@ -155,7 +157,7 @@ def _raise_for_rmbg_429(body: str, retry_after_header: Optional[str] = None) -> 
 
 
 def membership_has_credits(payload: Dict[str, Any]) -> bool:
-    """True if rembg membership-usage reports usable credits or prepaidCredits."""
+    """True if credits are above the freemium allotment, or prepaidCredits > 0."""
 
     def _as_number(value: Any) -> float:
         try:
@@ -163,7 +165,10 @@ def membership_has_credits(payload: Dict[str, Any]) -> bool:
         except (TypeError, ValueError):
             return 0.0
 
-    return _as_number(payload.get("credits")) > 0 or _as_number(payload.get("prepaidCredits")) > 0
+    return (
+        _as_number(payload.get("credits")) > FREEMIUM_INCLUDED_CREDITS
+        or _as_number(payload.get("prepaidCredits")) > 0
+    )
 
 
 def raise_for_rembg_status(status_code: int, body: str, *, context: str = "rembg API") -> None:
@@ -354,11 +359,12 @@ class RembgHostedRemover(BaseBackgroundRemover):
         return payload
 
     def check_account_ready(self) -> Dict[str, Any]:
-        """Confirm rembg is reachable and the account has credits or prepaidCredits > 0."""
+        """Confirm rembg is reachable and credits > 60 or prepaidCredits > 0."""
         payload = self.get_membership_usage()
         if not membership_has_credits(payload):
             raise RembgUnavailableError(
                 "Rembg account has no usable credits "
-                f"(credits={payload.get('credits')}, prepaidCredits={payload.get('prepaidCredits')})"
+                f"(credits={payload.get('credits')}, prepaidCredits={payload.get('prepaidCredits')}; "
+                f"need credits > {FREEMIUM_INCLUDED_CREDITS} or prepaidCredits > 0)"
             )
         return payload

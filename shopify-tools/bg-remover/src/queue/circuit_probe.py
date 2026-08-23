@@ -1,18 +1,23 @@
-"""HTTP probe: rembg membership-usage, then resume Cloud Tasks if credits remain."""
+"""HTTP probe: rembg membership-usage, then a /rmbg canary before resume."""
 
 import json
 import os
+from io import BytesIO
 from typing import Any, Dict, Tuple
 
 import functions_framework
 from flask import Request
+from PIL import Image
 
 from src.utils import applog
 
 from src.queue.queue_control import (
     CIRCUIT_STILL_OPEN_LOG,
+    canary_is_due,
     emit_circuit_log,
     is_product_queue_paused,
+    record_canary_failure,
+    reset_canary_backoff,
     resume_product_queue,
 )
 from src.queue.custom_metrics import write_circuit_open_gauge, write_rembg_credit_gauges
@@ -22,6 +27,8 @@ from src.removers import (
     membership_has_credits,
 )
 from src.removers.rembg_http import DEFAULT_MEMBERSHIP_USAGE_URL
+
+CANARY_EDGE_PX = 32
 
 
 def _rembg_key() -> str:
@@ -36,8 +43,33 @@ def _rembg_key() -> str:
         return ""
 
 
+def _canary_png_bytes() -> bytes:
+    buf = BytesIO()
+    Image.new("RGB", (CANARY_EDGE_PX, CANARY_EDGE_PX), (255, 255, 255)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _open_result(
+    reason: str,
+    paused: Any,
+    usage: Dict[str, Any],
+) -> Dict[str, Any]:
+    write_circuit_open_gauge(bool(paused))
+    if paused:
+        emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {reason}")
+    else:
+        applog.warning(f"Rembg probe failed while queue is not paused: {reason}")
+    return {
+        "status": "open",
+        "reason": reason,
+        "paused": paused,
+        "credits": usage.get("credits"),
+        "prepaidCredits": usage.get("prepaidCredits"),
+    }
+
+
 def probe_rembg_and_resume() -> Dict[str, Any]:
-    """GET /api/membership-usage. Resume the product queue when rembg is up and has credits."""
+    """GET membership-usage; if paused and credits remain, canary /rmbg before resume."""
     usage_url = os.environ.get("REMBG_MEMBERSHIP_USAGE_URL", DEFAULT_MEMBERSHIP_USAGE_URL)
     remover = RembgHostedRemover(api_key=_rembg_key(), membership_usage_url=usage_url)
     try:
@@ -53,24 +85,35 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
 
     write_rembg_credit_gauges(usage)
     if not membership_has_credits(usage):
+        reset_canary_backoff()
         reason = (
             "Rembg account has no usable credits "
-            f"(credits={usage.get('credits')}, prepaidCredits={usage.get('prepaidCredits')})"
+            f"(credits={usage.get('credits')}, prepaidCredits={usage.get('prepaidCredits')}; "
+            "need credits > 60 or prepaidCredits > 0)"
         )
         paused = is_product_queue_paused()
-        write_circuit_open_gauge(bool(paused))
-        if paused:
-            emit_circuit_log(f"{CIRCUIT_STILL_OPEN_LOG} rembg probe failed: {reason}")
-        else:
-            applog.warning(f"Rembg probe failed while queue is not paused: {reason}")
-        return {
-            "status": "open",
-            "reason": reason,
-            "paused": paused,
-            "credits": usage.get("credits"),
-            "prepaidCredits": usage.get("prepaidCredits"),
-        }
+        return _open_result(reason, paused, usage)
 
+    paused = is_product_queue_paused()
+    if paused is True:
+        if not canary_is_due():
+            return _open_result("Rembg /rmbg canary hold", paused, usage)
+        try:
+            canary = RembgHostedRemover(
+                api_key=_rembg_key(),
+                membership_usage_url=usage_url,
+                max_retries=0,
+            )
+            canary.remove_background(_canary_png_bytes())
+        except BackgroundRemoverError as e:
+            hold = record_canary_failure()
+            return _open_result(
+                f"Rembg /rmbg canary failed (next in {hold}s): {e}",
+                paused,
+                usage,
+            )
+
+    reset_canary_backoff()
     resumed = resume_product_queue()
     return {
         "status": "closed",

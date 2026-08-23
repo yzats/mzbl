@@ -271,21 +271,97 @@ def test_worker_does_not_pause_on_shopify_rate_limit(mocker):
 
 
 def test_probe_resumes_queue_when_rembg_ok(mocker):
-    mocker.patch(
-        "src.queue.circuit_probe.RembgHostedRemover"
-    ).return_value.get_membership_usage.return_value = {
-        "credits": 12,
-        "prepaidCredits": 0,
-    }
+    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
+    instance.get_membership_usage.return_value = {"credits": 61, "prepaidCredits": 0}
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=False)
     gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
     resume = mocker.patch("src.queue.circuit_probe.resume_product_queue", return_value=True)
 
     result = probe_rembg_and_resume()
     assert result["status"] == "closed"
     assert result["resumed"] is True
-    assert result["credits"] == 12
-    gauges.assert_called_once_with({"credits": 12, "prepaidCredits": 0})
+    assert result["credits"] == 61
+    gauges.assert_called_once_with({"credits": 61, "prepaidCredits": 0})
     resume.assert_called_once()
+    instance.remove_background.assert_not_called()
+
+
+def test_probe_canary_success_resumes_when_paused(mocker):
+    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
+    instance.get_membership_usage.return_value = {"credits": 61, "prepaidCredits": 0}
+    instance.remove_background.return_value = b"ok"
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+    mocker.patch("src.queue.circuit_probe.canary_is_due", return_value=True)
+    reset = mocker.patch("src.queue.circuit_probe.reset_canary_backoff")
+    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue", return_value=True)
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "closed"
+    instance.remove_background.assert_called_once()
+    reset.assert_called()
+    gauges.assert_called_once()
+    resume.assert_called_once()
+
+
+def test_probe_canary_failure_does_not_resume(mocker):
+    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
+    instance.get_membership_usage.return_value = {"credits": 61, "prepaidCredits": 0}
+    instance.remove_background.side_effect = RetryableBackgroundRemoverError(
+        "Transient rembg API error (HTTP 500)"
+    )
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+    mocker.patch("src.queue.circuit_probe.canary_is_due", return_value=True)
+    record = mocker.patch("src.queue.circuit_probe.record_canary_failure", return_value=300)
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
+    mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "open"
+    assert "canary failed" in result["reason"]
+    record.assert_called_once()
+    resume.assert_not_called()
+
+
+def test_probe_skips_canary_during_hold(mocker):
+    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
+    instance.get_membership_usage.return_value = {"credits": 61, "prepaidCredits": 0}
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+    mocker.patch("src.queue.circuit_probe.canary_is_due", return_value=False)
+    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "open"
+    assert "canary hold" in result["reason"]
+    instance.remove_background.assert_not_called()
+    gauges.assert_called_once()
+    resume.assert_not_called()
+
+
+def test_probe_skips_canary_on_freemium_credits(mocker):
+    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
+    instance.get_membership_usage.return_value = {"credits": 60, "prepaidCredits": 0}
+    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
+    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
+    mocker.patch("src.queue.circuit_probe.reset_canary_backoff")
+
+    result = probe_rembg_and_resume()
+    assert result["status"] == "open"
+    instance.remove_background.assert_not_called()
+    gauges.assert_called_once()
+    resume.assert_not_called()
+
+
+def test_canary_hold_seconds_steps():
+    from src.queue.queue_control import canary_hold_seconds
+
+    assert canary_hold_seconds(1) == 5 * 60
+    assert canary_hold_seconds(2) == 15 * 60
+    assert canary_hold_seconds(3) == 30 * 60
+    assert canary_hold_seconds(4) == 60 * 60
+    assert canary_hold_seconds(9) == 60 * 60
 
 
 def test_probe_keeps_circuit_open_when_rembg_fails(mocker):
@@ -306,18 +382,19 @@ def test_probe_keeps_circuit_open_when_rembg_fails(mocker):
 
 def test_probe_writes_zero_credit_gauges_when_account_empty(mocker):
     usage = {"credits": 0, "prepaidCredits": 0}
-    mocker.patch(
-        "src.queue.circuit_probe.RembgHostedRemover"
-    ).return_value.get_membership_usage.return_value = usage
+    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
+    instance.get_membership_usage.return_value = usage
     gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
     resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
     mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
+    mocker.patch("src.queue.circuit_probe.reset_canary_backoff")
 
     result = probe_rembg_and_resume()
     assert result["status"] == "open"
     assert result["credits"] == 0
     gauges.assert_called_once_with(usage)
     resume.assert_not_called()
+    instance.remove_background.assert_not_called()
 
 
 def test_worker_rejects_non_myshopify_host(mocker):

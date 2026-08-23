@@ -1,7 +1,8 @@
 """Pause / resume the product Cloud Tasks queue (rembg circuit breaker)."""
 
 import os
-from typing import Optional
+import time
+from typing import Any, Dict, Optional
 
 from src.queue.custom_metrics import write_circuit_open_gauge
 from src.utils import applog
@@ -9,6 +10,12 @@ from src.utils import applog
 CIRCUIT_OPEN_LOG = "[CIRCUIT OPEN]"
 CIRCUIT_STILL_OPEN_LOG = "[CIRCUIT STILL OPEN]"
 CIRCUIT_CLOSED_LOG = "[CIRCUIT CLOSED]"
+CIRCUIT_COLLECTION = "circuit_state"
+CIRCUIT_DOC = "rembg"
+# Consecutive canary failures: 5m, 15m, 30m, then 60m cap.
+CANARY_HOLD_SECONDS = (5 * 60, 15 * 60, 30 * 60, 60 * 60)
+
+_local_circuit_state: Dict[str, Any] = {"fail_count": 0, "next_canary_at": 0.0}
 
 
 def emit_circuit_log(msg: str) -> None:
@@ -33,6 +40,79 @@ def _queue_client_and_path():
     except Exception as e:
         applog.warning(f"Cloud Tasks client unavailable for circuit control: {e}")
         return None, ""
+
+
+def _circuit_doc():
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    if not project_id:
+        return None
+    try:
+        from google.cloud import firestore
+        return firestore.Client(project=project_id).collection(CIRCUIT_COLLECTION).document(
+            CIRCUIT_DOC
+        )
+    except Exception as e:
+        applog.warning(f"Firestore circuit_state unavailable: {e}")
+        return None
+
+
+def _read_circuit_state() -> Dict[str, Any]:
+    ref = _circuit_doc()
+    if not ref:
+        return dict(_local_circuit_state)
+    try:
+        snap = ref.get()
+        if not snap.exists:
+            return {"fail_count": 0, "next_canary_at": 0.0}
+        data = snap.to_dict() or {}
+        return {
+            "fail_count": int(data.get("fail_count") or 0),
+            "next_canary_at": float(data.get("next_canary_at") or 0),
+        }
+    except Exception as e:
+        applog.warning(f"Failed to read circuit_state: {e}")
+        return {"fail_count": 0, "next_canary_at": 0.0}
+
+
+def _write_circuit_state(fail_count: int, next_canary_at: float) -> None:
+    global _local_circuit_state
+    _local_circuit_state = {"fail_count": fail_count, "next_canary_at": next_canary_at}
+    ref = _circuit_doc()
+    if not ref:
+        return
+    try:
+        ref.set({
+            "fail_count": fail_count,
+            "next_canary_at": next_canary_at,
+            "updated_at": time.time(),
+        })
+    except Exception as e:
+        applog.warning(f"Failed to write circuit_state: {e}")
+
+
+def canary_hold_seconds(fail_count: int) -> int:
+    if fail_count <= 0:
+        return CANARY_HOLD_SECONDS[0]
+    idx = min(fail_count - 1, len(CANARY_HOLD_SECONDS) - 1)
+    return CANARY_HOLD_SECONDS[idx]
+
+
+def canary_is_due() -> bool:
+    """True if a paused-queue /rmbg canary may run. Missing/error → True (fail-open)."""
+    return time.time() >= float(_read_circuit_state().get("next_canary_at") or 0)
+
+
+def record_canary_failure() -> int:
+    """Increment fail_count and set next_canary_at. Returns hold seconds."""
+    state = _read_circuit_state()
+    fail_count = int(state.get("fail_count") or 0) + 1
+    hold = canary_hold_seconds(fail_count)
+    _write_circuit_state(fail_count, time.time() + hold)
+    return hold
+
+
+def reset_canary_backoff() -> None:
+    _write_circuit_state(0, 0.0)
 
 
 def pause_product_queue(reason: str) -> bool:

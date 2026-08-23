@@ -234,7 +234,8 @@ def test_rembg_error_message_texts_single_and_multiple():
 def test_membership_has_credits():
     from src.removers.rembg_http import membership_has_credits
 
-    assert membership_has_credits({"credits": 5, "prepaidCredits": 0}) is True
+    assert membership_has_credits({"credits": 60, "prepaidCredits": 0}) is False
+    assert membership_has_credits({"credits": 61, "prepaidCredits": 0}) is True
     assert membership_has_credits({"credits": 0, "prepaidCredits": 3}) is True
     assert membership_has_credits({"credits": 0, "prepaidCredits": 0}) is False
     assert membership_has_credits({}) is False
