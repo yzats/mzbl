@@ -141,9 +141,73 @@ def test_rmbg_429_rate_limit_is_retryable(mocker):
     remover = RembgHostedRemover(
         api_url="https://api.rembg.com/rmbg", api_key="k", max_retries=2, backoff_delay=0.01
     )
-    with pytest.raises(RetryableBackgroundRemoverError, match="HTTP 429"):
+    with pytest.raises(RetryableBackgroundRemoverError, match="HTTP 429") as exc:
         remover.remove_background(b"fake_image")
     assert requests.post.call_count == 3
+    assert exc.value.pause_circuit is False
+
+
+def test_parse_retry_after_seconds_and_suffix():
+    from src.removers.rembg_http import parse_retry_after
+
+    assert parse_retry_after("45") == 45.0
+    assert parse_retry_after("45s") == 45.0
+    assert parse_retry_after("30S") == 30.0
+    assert parse_retry_after(None) is None
+    assert parse_retry_after("") is None
+    assert parse_retry_after("  ") is None
+    assert parse_retry_after("nope") is None
+
+
+def test_parse_retry_after_http_date():
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+    from src.removers.rembg_http import parse_retry_after
+
+    when = datetime.now(timezone.utc) + timedelta(seconds=25)
+    seconds = parse_retry_after(format_datetime(when, usegmt=True))
+    assert seconds is not None
+    assert 15 <= seconds <= 35
+
+
+def test_rmbg_429_rate_limit_honors_retry_after(mocker):
+    sleep = mocker.patch("time.sleep")
+    body = (
+        '{"error":"You\'re making requests too quickly, Please Upgrade or slow down.",'
+        '"status":429}'
+    )
+    mock_429 = MagicMock(status_code=429, text=body)
+    mock_429.headers = {"Retry-After": "45"}
+    mock_200 = MagicMock(status_code=200, content=b"fake_png_data")
+    mocker.patch("requests.post", side_effect=[mock_429, mock_200])
+
+    remover = RembgHostedRemover(
+        api_url="https://api.rembg.com/rmbg", api_key="k", max_retries=2
+    )
+    assert remover.remove_background(b"fake_image") == b"fake_png_data"
+    assert sleep.call_args_list[0].args[0] == 45.0
+
+
+def test_rmbg_429_rate_limit_skips_over_budget_retry_after(mocker):
+    sleep = mocker.patch("time.sleep")
+    body = (
+        '{"error":"You\'re making requests too quickly, Please Upgrade or slow down.",'
+        '"status":429}'
+    )
+    mock_429 = MagicMock(status_code=429, text=body)
+    mock_429.headers = {"Retry-After": "45"}
+    mocker.patch("requests.post", return_value=mock_429)
+
+    remover = RembgHostedRemover(
+        api_url="https://api.rembg.com/rmbg",
+        api_key="k",
+        max_retries=2,
+        max_in_process_seconds=1.0,
+    )
+    with pytest.raises(RetryableBackgroundRemoverError, match="HTTP 429"):
+        remover.remove_background(b"fake_image")
+    sleep.assert_not_called()
+    assert requests.post.call_count == 1
 
 
 def test_rembg_error_message_texts_single_and_multiple():

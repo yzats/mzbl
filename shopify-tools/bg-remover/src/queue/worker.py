@@ -129,10 +129,16 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
         return {"status": "success", "processed_count": processed_count}, 200
 
     except (ShopifyAPIError, BackgroundRemoverError) as e:
-        if isinstance(e, (RembgUnavailableError, RetryableBackgroundRemoverError)):
+        if isinstance(e, RembgUnavailableError):
             applog.warning(f"Rembg unavailable for {product_id}: {e}")
             pause_product_queue(str(e))
             return {"status": "error", "circuit": "open", "message": str(e)}, 503
+        if isinstance(e, RetryableBackgroundRemoverError):
+            applog.warning(f"Retryable rembg error for {product_id}: {e}")
+            if e.pause_circuit:
+                pause_product_queue(str(e))
+                return {"status": "error", "circuit": "open", "message": str(e)}, 503
+            return {"status": "error", "message": str(e)}, 503
         if isinstance(e, RetryableShopifyError):
             applog.warning(f"Retryable Shopify error for {product_id}: {e}")
             return {"status": "error", "message": str(e)}, 503

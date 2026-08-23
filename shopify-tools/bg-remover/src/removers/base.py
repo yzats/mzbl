@@ -8,8 +8,22 @@ class BackgroundRemoverError(Exception):
 
 
 class RetryableBackgroundRemoverError(BackgroundRemoverError):
-    """Exception raised for transient/retryable errors (e.g. HTTP 429, HTTP 502/503/504, network timeouts)."""
-    pass
+    """Transient rembg errors (short-term 429, 5xx, timeout).
+
+    ``pause_circuit`` is True for 5xx/timeout (worker pauses Cloud Tasks).
+    Rate-limit 429 sets it False so only this task backs off.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        retry_after_seconds: Optional[float] = None,
+        pause_circuit: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+        self.pause_circuit = pause_circuit
 
 
 class RembgUnavailableError(BackgroundRemoverError):

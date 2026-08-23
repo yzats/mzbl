@@ -1,6 +1,8 @@
 import json
 import os
-
+import re
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from src.utils import applog
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
@@ -75,6 +77,36 @@ def rembg_429_is_credit_exhaustion(body: str) -> bool:
     return any(needle in blob for needle in _CREDIT_EXHAUSTION_NEEDLES)
 
 
+_RETRY_AFTER_SECONDS = re.compile(r"^(\d+(?:\.\d+)?)s$", re.IGNORECASE)
+
+
+def parse_retry_after(header: Optional[str]) -> Optional[float]:
+    """Parse rembg Retry-After: ``45``, ``45s``, or an HTTP-date. None if missing/invalid."""
+    if not isinstance(header, str):
+        return None
+    raw = header.strip()
+    if not raw:
+        return None
+    suffixed = _RETRY_AFTER_SECONDS.match(raw)
+    if suffixed:
+        return float(suffixed.group(1))
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = None
+    else:
+        if seconds >= 0:
+            return seconds
+        return None
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, OverflowError, IndexError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 def image_pixel_size(data: bytes) -> Optional[Tuple[int, int]]:
     """Return (width, height) or None if the bytes are not a readable image."""
     if not data:
@@ -105,17 +137,20 @@ def output_is_freemium_capped(input_data: bytes, output_data: bytes) -> bool:
     return max(in_w, in_h) > FREEMIUM_API_MAX_EDGE + FREEMIUM_SHRINK_LEEWAY_PX
 
 
-def _raise_for_rmbg_429(body: str) -> None:
+def _raise_for_rmbg_429(body: str, retry_after_header: Optional[str] = None) -> None:
     """HTTP 429 is short-term rate limit or monthly credit exhaustion (same status).
 
     See https://www.rembg.com/en/api-usage error reference.
+    Credit exhaustion does not honor Retry-After (circuit opens immediately).
     """
     if rembg_429_is_credit_exhaustion(body):
         raise RembgUnavailableError(
             f"Rembg monthly/credit limit (HTTP 429): {body}"
         )
     raise RetryableBackgroundRemoverError(
-        f"Transient rembg API rate limit (HTTP 429): {body}"
+        f"Transient rembg API rate limit (HTTP 429): {body}",
+        retry_after_seconds=parse_retry_after(retry_after_header),
+        pause_circuit=False,
     )
 
 
@@ -170,6 +205,7 @@ class RembgHostedRemover(BaseBackgroundRemover):
         timeout: int = 30,
         max_retries: int = 3,
         backoff_delay: float = 1.0,
+        max_in_process_seconds: float = 90.0,
         membership_usage_url: str = DEFAULT_MEMBERSHIP_USAGE_URL,
     ):
         """Initialize rembg.com remover client."""
@@ -179,6 +215,7 @@ class RembgHostedRemover(BaseBackgroundRemover):
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff_delay = backoff_delay
+        self.max_in_process_seconds = max_in_process_seconds
         self.membership_usage_url = membership_usage_url.rstrip("/")
 
     def remove_background(
@@ -213,6 +250,7 @@ class RembgHostedRemover(BaseBackgroundRemover):
             retries=self.max_retries,
             backoff_in_seconds=self.backoff_delay,
             retryable_exceptions=(RetryableBackgroundRemoverError,),
+            max_in_process_seconds=self.max_in_process_seconds,
         )
         def _send_request() -> bytes:
             headers = {}
@@ -246,7 +284,10 @@ class RembgHostedRemover(BaseBackgroundRemover):
                 ) from e
 
             if response.status_code == 429:
-                _raise_for_rmbg_429(response.text)
+                _raise_for_rmbg_429(
+                    response.text,
+                    response.headers.get("Retry-After") if response.headers else None,
+                )
             raise_for_rembg_status(response.status_code, response.text, context="API")
 
             if not response.content:
