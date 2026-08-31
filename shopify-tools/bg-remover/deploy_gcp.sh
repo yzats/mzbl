@@ -133,10 +133,31 @@ else
     --oidc-token-audience="${PROBE_URL}"
 fi
 
+echo "7. Deploying 'bg_remover_control' Cloud Function..."
+gcloud functions deploy bg_remover_control \
+  --gen2 \
+  --runtime=python311 \
+  --region="${GCP_REGION}" \
+  --source="${BG_REMOVER_DIR}" \
+  --entry-point=bg_remover_control \
+  --trigger-http \
+  --allow-unauthenticated \
+  --service-account="${SERVICE_ACCOUNT_EMAIL}" \
+  --memory=256Mi \
+  --timeout=10s \
+  --project="${GCP_PROJECT_ID}" \
+  --build-service-account="${BUILD_SERVICE_ACCOUNT}" \
+  --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION}" \
+  --set-secrets="GCP_CONTROL_SECRET=GCP_CONTROL_SECRET:latest"
+
+CONTROL_URL=$(gcloud functions describe bg_remover_control --gen2 --region="${GCP_REGION}" --project="${GCP_PROJECT_ID}" --format="value(serviceConfig.uri)")
+
 echo "======================================================================"
 echo "GCP Deployment Completed Successfully!"
 echo "   Webhook Receiver Endpoint: ${RECEIVER_URL}"
 echo "   Worker Endpoint:           ${WORKER_URL}"
 echo "   Circuit Probe Endpoint:    ${PROBE_URL}"
+echo "   Control-plane Endpoint:    ${CONTROL_URL}"
+echo "Autopilot BgRemover calls the control-plane with header X-Bg-Control-Secret."
 echo "Paste the Webhook Receiver Endpoint into Shopify Admin → Settings → Notifications → Webhooks (products/update)."
 echo "======================================================================"

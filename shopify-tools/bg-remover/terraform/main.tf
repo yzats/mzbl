@@ -152,6 +152,19 @@ resource "google_secret_manager_secret_version" "rembg_api_key_val" {
   secret_data = var.rembg_api_key
 }
 
+resource "google_secret_manager_secret" "gcp_control_secret" {
+  secret_id = "GCP_CONTROL_SECRET"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.required_services]
+}
+
+resource "google_secret_manager_secret_version" "gcp_control_secret_val" {
+  secret      = google_secret_manager_secret.gcp_control_secret.id
+  secret_data = var.gcp_control_secret
+}
+
 # ==============================================================================
 # 5. Service Accounts & IAM Permissions
 # ==============================================================================
@@ -204,8 +217,8 @@ resource "google_secret_manager_secret_iam_member" "admin_token_access" {
   member    = "serviceAccount:${google_service_account.bg_remover_sa.email}"
 }
 
-resource "google_secret_manager_secret_iam_member" "rembg_key_access" {
-  secret_id = google_secret_manager_secret.rembg_api_key.id
+resource "google_secret_manager_secret_iam_member" "control_secret_access" {
+  secret_id = google_secret_manager_secret.gcp_control_secret.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.bg_remover_sa.email}"
 }

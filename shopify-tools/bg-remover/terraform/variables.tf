@@ -37,9 +37,9 @@ variable "shopify_admin_access_token" {
   sensitive   = true
 }
 
-variable "rembg_api_key" {
+variable "gcp_control_secret" {
   type        = string
-  description = "Rembg Hosted API Key"
+  description = "Shared secret for Autopilot BgRemover control-plane header X-Bg-Control-Secret"
   sensitive   = true
 }
 

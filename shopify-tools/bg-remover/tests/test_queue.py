@@ -44,7 +44,7 @@ def test_local_task_dispatcher(mocker):
         shop_domain="test.myshopify.com",
     )
 
-    assert "local-task-12345" in task_id.task_id
+    assert "12345" in task_id.task_id
     assert task_id.outcome == "enqueued"
     time.sleep(0.1)  # Allow background thread execution
     mock_worker.assert_called_once()
@@ -71,10 +71,11 @@ def test_gcp_cloud_tasks_dispatcher_named_task():
     expected_id = named_task_id(
         "gid://shopify/Product/9999",
         {"updated_at": "2026-08-20T06:00:00-04:00"},
+        shop_domain="test.myshopify.com",
     )
     assert expected_id in result.task_id
     assert result.outcome == "simulated"
-    assert "task-product-9999-" in result.task_id
+    assert "-9999-" in result.task_id
 
 
 def test_gcp_cloud_tasks_dispatcher_logs_deduped_already_exists():
@@ -96,18 +97,20 @@ def test_gcp_cloud_tasks_dispatcher_logs_deduped_already_exists():
     )
 
     assert result.outcome == "deduplicated"
-    assert "task-product-9999-" in result.task_id
+    assert "-9999-" in result.task_id
 
 
 def test_named_task_id_changes_when_product_updated_at_changes():
     product_id = "gid://shopify/Product/9999"
-    first = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"})
-    second = named_task_id(product_id, {"updated_at": "2026-08-20T07:00:00Z"})
-    retry = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"})
+    first = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"}, shop_domain="a.myshopify.com")
+    second = named_task_id(product_id, {"updated_at": "2026-08-20T07:00:00Z"}, shop_domain="a.myshopify.com")
+    retry = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"}, shop_domain="a.myshopify.com")
+    other_shop = named_task_id(product_id, {"updated_at": "2026-08-20T06:00:00Z"}, shop_domain="b.myshopify.com")
 
     assert first != second
     assert first == retry
-    assert first.startswith("task-product-9999-")
+    assert first != other_shop
+    assert "-9999-" in first
 
 
 def test_firestore_document_id_is_path_safe():
@@ -339,21 +342,6 @@ def test_probe_skips_canary_during_hold(mocker):
     resume.assert_not_called()
 
 
-def test_probe_skips_canary_on_freemium_credits(mocker):
-    instance = mocker.patch("src.queue.circuit_probe.RembgHostedRemover").return_value
-    instance.get_membership_usage.return_value = {"credits": 60, "prepaidCredits": 0}
-    mocker.patch("src.queue.circuit_probe.is_product_queue_paused", return_value=True)
-    gauges = mocker.patch("src.queue.circuit_probe.write_rembg_credit_gauges")
-    resume = mocker.patch("src.queue.circuit_probe.resume_product_queue")
-    mocker.patch("src.queue.circuit_probe.reset_canary_backoff")
-
-    result = probe_rembg_and_resume()
-    assert result["status"] == "open"
-    instance.remove_background.assert_not_called()
-    gauges.assert_called_once()
-    resume.assert_not_called()
-
-
 def test_canary_hold_seconds_steps():
     from src.queue.queue_control import canary_hold_seconds
 
@@ -409,12 +397,10 @@ def test_worker_rejects_non_myshopify_host(mocker):
     assert "Invalid Shopify store host" in res_dict["message"]
 
 
-def test_worker_uses_configured_store_not_payload_host(mocker):
+def test_worker_skips_unregistered_shop_even_if_config_token_exists(mocker):
     mocker.patch("src.queue.worker.SHOPIFY_STORE_URL", "https://good.myshopify.com")
     mocker.patch("src.queue.worker.SHOPIFY_ADMIN_API_ACCESS_TOKEN", "test-token")
-    mock_client = MagicMock()
-    mock_client.get_unprocessed_images.return_value = []
-    constructed = mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    constructed = mocker.patch("src.queue.worker.ShopifyGraphQLClient")
     mocker.patch("src.queue.worker.RembgHostedRemover")
 
     payload = {
@@ -423,7 +409,68 @@ def test_worker_uses_configured_store_not_payload_host(mocker):
     }
     res_dict, status_code = execute_background_removal_job(payload)
     assert status_code == 200
-    assert constructed.call_args.kwargs["store_url"] == "good.myshopify.com"
+    assert res_dict["status"] == "skipped"
+    constructed.assert_not_called()
+
+
+def test_worker_uses_registry_token_and_skips_when_auto_disabled(mocker):
+    from src.queue.memory_stores import InMemoryShopStore
+
+    store = InMemoryShopStore()
+    store.upsert_shop(
+        "live.myshopify.com",
+        {"accessToken": "shpat_live", "status": "connected", "autoEnabled": False},
+    )
+    mocker.patch("src.queue.worker.get_shop_store", return_value=store)
+    constructed = mocker.patch("src.queue.worker.ShopifyGraphQLClient")
+
+    payload = {
+        "product_id": "gid://shopify/Product/12345",
+        "shop_domain": "live.myshopify.com",
+    }
+    res_dict, status_code = execute_background_removal_job(payload)
+    assert status_code == 200
+    assert res_dict["reason"] == "autoEnabled is false"
+    constructed.assert_not_called()
+
+
+def test_worker_uses_registry_token_when_auto_enabled(mocker):
+    from src.queue.memory_stores import InMemoryShopStore
+
+    store = InMemoryShopStore()
+    store.upsert_shop(
+        "live.myshopify.com",
+        {
+            "accessToken": "shpat_live",
+            "status": "connected",
+            "autoEnabled": True,
+            "imagesScope": "featured",
+            "fillMode": "hex",
+            "fillHex": "#00FF00",
+        },
+    )
+    mocker.patch("src.queue.worker.get_shop_store", return_value=store)
+    mock_client = MagicMock()
+    mock_client.get_unprocessed_images.return_value = [
+        {"media_id": "gid://shopify/MediaImage/1", "url": "https://cdn.example/x.jpg"}
+    ]
+    constructed = mocker.patch("src.queue.worker.ShopifyGraphQLClient", return_value=mock_client)
+    mocker.patch("src.queue.worker.RembgHostedRemover")
+    batch = mocker.patch("process_product.process_product_batch", return_value=1)
+    mocker.patch("src.queue.worker.increment_images_processed")
+
+    payload = {
+        "product_id": "gid://shopify/Product/12345",
+        "shop_domain": "live.myshopify.com",
+    }
+    res_dict, status_code = execute_background_removal_job(payload)
+    assert status_code == 200
+    assert constructed.call_args.kwargs["store_url"] == "live.myshopify.com"
+    assert constructed.call_args.kwargs["access_token"] == "shpat_live"
+    mock_client.get_unprocessed_images.assert_called_once()
+    assert mock_client.get_unprocessed_images.call_args.kwargs["images_scope"] == "featured"
+    assert batch.call_args.kwargs["bg_color"] == "#00FF00"
+    assert res_dict["processed_count"] == 1
 
 
 def test_worker_increments_images_processed(mocker):

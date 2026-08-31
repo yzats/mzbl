@@ -6,6 +6,7 @@ from pathlib import Path
 from src.webhooks.receiver import shopify_webhook_receiver  # noqa: F401
 from src.queue.worker import bg_remover_worker  # noqa: F401
 from src.queue.circuit_probe import rembg_circuit_probe  # noqa: F401
+from src.control.api import bg_remover_control  # noqa: F401
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -15,12 +16,10 @@ try:
     import config
     REMBG_API_URL = getattr(config, "REMBG_API_URL", "https://www.rembg.com/api/remove")
     REMBG_API_KEY = getattr(config, "REMBG_API_KEY", "")
-    DEFAULT_BG_COLOR = getattr(config, "DEFAULT_BG_COLOR", "#FFFFFF")
     DEFAULT_TIMEOUT = getattr(config, "REMBG_TIMEOUT", 30)
 except ImportError:
     REMBG_API_URL = "https://www.rembg.com/api/remove"
     REMBG_API_KEY = ""
-    DEFAULT_BG_COLOR = "#FFFFFF"
     DEFAULT_TIMEOUT = 30
 
 from src.removers import (
@@ -51,11 +50,6 @@ def main():
         help=f"rembg API URL (default: {REMBG_API_URL})",
     )
     parser.add_argument(
-        "--bg-color",
-        default=DEFAULT_BG_COLOR,
-        help=f"Hex color code for background replacement (e.g. '#FFFFFF' for white). Default: {DEFAULT_BG_COLOR}",
-    )
-    parser.add_argument(
         "--timeout",
         default=DEFAULT_TIMEOUT,
         type=int,
@@ -79,8 +73,8 @@ def main():
     )
 
     try:
-        print(f"Sending image ({len(image_bytes)} bytes) to rembg API at {args.api_url} (bg_color={args.bg_color})...")
-        processed_bytes = remover.remove_background(image_bytes, bg_color=args.bg_color)
+        print(f"Sending image ({len(image_bytes)} bytes) to rembg API at {args.api_url} (transparent PNG)...")
+        processed_bytes = remover.remove_background(image_bytes)
 
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,9 +15,9 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 - **Pluggable Removers:** Abstract strategy pattern (`BaseBackgroundRemover`) to support hosted `rembg` instances.
 - **Layered Idempotency & Anti-Race Guards:**
   - *Layer 1 (Receiver):* `X-Shopify-Webhook-Id` de-duplication prevents processing duplicate retransmissions (backed by `InMemoryDedupStore` locally, **Cloud Firestore** `webhook_dedup` collection in production).
-  - *Layer 2 (Queue):* Named task `task-product-{clean_pid}-{pid_hash}-{update_hash}` coalesces the same Shopify `updated_at`; later edits get a new name (Cloud Tasks ~1h tombstone is per-name).
-  - *Layer 3 (Worker Lock):* Product processing lock (`ProductLock(product_id)`) prevents concurrent worker race conditions (backed by `InMemoryLockStore` locally, **Cloud Firestore** `product_locks` collection in production).
-  - *Layer 4 (Media Level):* Alt text inspection (`alt="hide"` / `alt="bg-removed"`) skips already-processed images.
+  - *Layer 2 (Queue):* Named task `task-product-{shop_hash}-{clean_pid}-{pid_hash}-{update_hash}` coalesces the same shop + Shopify `updated_at`; later edits get a new name (Cloud Tasks ~1h tombstone is per-name).
+  - *Layer 3 (Worker Lock):* Product processing lock (`lock:product:{shop_domain}:{product_id}`) prevents concurrent worker race conditions (backed by `InMemoryLockStore` locally, **Cloud Firestore** `product_locks` collection in production).
+  - *Layer 4 (Media Level):* App-owned MediaImage metafield `$app.bg_state` (`source` / `result` skip; empty = process). Product tag `bg_skip` skips the product. Alt is copied, never used as a flag.
 - **Resilience:** GCP Cloud Tasks for rate limiting + auto-retry, plus a daily Reconciliation Cron job to catch missed webhooks.
 - **Testing:** Unit tests required at every stage.
 
@@ -42,7 +42,7 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
   1. Download original image from Shopify CDN URL.
   2. Pass image bytes through remover provider (`RembgHostedRemover`).
   3. Upload background-removed PNG back via `stagedUploadsCreate`.
-  4. Replace / add image using `productCreateMedia` / `productDeleteMedia`.
+  4. Attach new media using `productCreateMedia` (originals always kept).
 - [x] Write CLI script to process product images (`process_product.py`).
 - [x] Write unit tests (`tests/test_shopify.py`):
   - [x] Mocked Shopify GraphQL API response handlers.
@@ -51,11 +51,14 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 ### Stage 3: Full Product Processing & Idempotency Guard
 - [x] Implement batch media processing for all images on a product.
 - [x] Preserve original media ordering / positions on the product.
-- [x] Implement media-level idempotency guard:
-  - [x] Check media `altText` before processing (`alt == "hide"` or `alt == "bg-removed"` -> skip).
+  - [x] Implement media-level idempotency guard:
+  - [x] Skip media with `$app.bg_state` `source` or `result`; process empty `bg_state` only.
+  - [x] Skip product when tagged `bg_skip`.
+  - [x] Copy original alt onto new media; do not stamp alt flags.
+  - [x] Always keep originals; write `$app.bg_source` (original GID) on result media.
 - [x] Write CLI script to safely process an entire product by ID/handle or target by sequence number (`process_product.py`).
 - [x] Write unit tests:
-  - [x] Idempotency guard logic (`tests/test_alt_helpers.py` verifying skip on already-processed media).
+  - [x] Idempotency guard logic (`tests/test_metafields.py` / `tests/test_shopify.py` verifying skip on `$app.bg_state` and `bg_skip`).
   - [x] Image order preservation logic.
 
 ### Stage 4: Webhook Receiver & HMAC Verification (Functions Framework)
@@ -73,7 +76,7 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 ### Stage 5: Pluggable Task Queue & Local/GCP Worker Pipeline
 - [x] Implement `BaseTaskDispatcher` interface for dispatching lightweight background tasks (`product_id`, `shop_domain`, `topic`).
 - [x] Implement `LocalTaskDispatcher` (background thread execution with `InMemoryLockStore` concurrency guard for local dev/testing).
-- [x] Implement `GCPCloudTasksDispatcher` using Named Tasks (`task-product-{clean_pid}-{pid_hash}-{update_hash}`) to coalesce the same product revision without a 1-hour per-product tombstone.
+- [x] Implement `GCPCloudTasksDispatcher` using Named Tasks (`task-product-{shop_hash}-{clean_pid}-{pid_hash}-{update_hash}`) to coalesce the same shop + product revision without a 1-hour per-product tombstone.
 - [x] Implement provider-agnostic `BaseLockStore` & `BaseDedupStore` interfaces:
   - [x] `InMemoryLockStore` / `InMemoryDedupStore`: In-memory implementation with TTL for local development and testing.
   - [x] `GCPFirestoreLockStore` / `GCPFirestoreDedupStore`: GCP Cloud Firestore backend (`product_locks` and `webhook_dedup` collections with TTL) for production GCP Cloud Functions.
@@ -93,8 +96,14 @@ A resilient, pluggable, and serverless pipeline for removing backgrounds from Sh
 ### Stage 7: Production GCP Deployment Ready
 - [x] Write GCP automated deployment script (`deploy_gcp.sh`).
 - [x] Provision GCP Cloud Tasks Queue (`bg-remover-queue` with rate limits & retries).
-- [x] Provision GCP Cloud Firestore collections (`webhook_dedup` and `product_locks` via `GCPFirestoreDedupStore` / `GCPFirestoreLockStore`).
+- [x] Provision GCP Cloud Firestore collections (`webhook_dedup`, `product_locks`, and `shops` via Firestore stores).
 - [x] Document GCP Cloud Tasks, Secret Manager, IAM, and deployment procedure in `ARCHITECTURE.md`.
+
+### Stage 8: Multi-store control plane
+- [x] MediaImage `$app.bg_state` Layer 4; copy original alt; product tag `bg_skip`. Originals always kept. Result stores `$app.bg_source` (original GID).
+- [x] Shop registry (in-memory / Firestore `shops`) and `bg_remover_control` HTTP API (`registerShop`, `unregisterShop`, `setConfig`, `getShopStatus`, `syncEntitlement`).
+- [x] Worker loads per-shop token from registry (local `config.py` fallback); shop-scoped locks and Cloud Tasks names.
+- [x] Honor `autoEnabled`, `imagesScope`, and hex `fillMode` from shop config.
 
 ---
 
@@ -108,6 +117,7 @@ mzbl/shopify-tools/bg-remover/
 │   │   └── rembg_http.py  # Rembg hosted API client
 │   ├── shopify/           # Shopify GraphQL API client & metafield guards
 │   ├── queue/             # Queue execution abstraction (Local -> GCP Cloud Tasks)
+│   ├── control/           # Multi-shop control-plane HTTP API
 │   └── webhooks/          # Webhook handlers & HMAC verification
 ├── tests/                 # Stage-by-stage unit & integration tests
 │   ├── test_removers.py

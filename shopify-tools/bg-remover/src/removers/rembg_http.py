@@ -22,8 +22,6 @@ DEFAULT_MEMBERSHIP_USAGE_URL = "https://www.rembg.com/api/membership-usage"
 
 # https://www.rembg.com/en/pricing — Free API max resolution 460×460
 FREEMIUM_API_MAX_EDGE = 460
-# Freemium included monthly credits; probe/canary require more than this, or prepaid.
-FREEMIUM_INCLUDED_CREDITS = 60
 # Ignore sources only slightly above 460 (e.g. 461→460). Freemium is a large original stuffed into 460×460.
 FREEMIUM_SHRINK_LEEWAY_PX = 8
 # https://www.rembg.com/en/api-usage — monthly credits 429 vs short-term rate limit 429
@@ -157,7 +155,7 @@ def _raise_for_rmbg_429(body: str, retry_after_header: Optional[str] = None) -> 
 
 
 def membership_has_credits(payload: Dict[str, Any]) -> bool:
-    """True if credits are above the freemium allotment, or prepaidCredits > 0."""
+    """False only when credits and prepaidCredits are both 0 (missing fields count as 0)."""
 
     def _as_number(value: Any) -> float:
         try:
@@ -165,10 +163,7 @@ def membership_has_credits(payload: Dict[str, Any]) -> bool:
         except (TypeError, ValueError):
             return 0.0
 
-    return (
-        _as_number(payload.get("credits")) > FREEMIUM_INCLUDED_CREDITS
-        or _as_number(payload.get("prepaidCredits")) > 0
-    )
+    return _as_number(payload.get("credits")) > 0 or _as_number(payload.get("prepaidCredits")) > 0
 
 
 def raise_for_rembg_status(status_code: int, body: str, *, context: str = "rembg API") -> None:
@@ -198,15 +193,13 @@ class RembgHostedRemover(BaseBackgroundRemover):
     API parameters supported:
       - `image`: File multipart upload
       - `x-api-key`: Header with API key
-      - `format`: Output format ("png" or "webp", default: "png" for lossless transparency)
-      - `bg_color`: Hex color (e.g. "#ffffff" or "#ffffffff")
+      - `format` is omitted so rembg uses its default (webp)
     """
 
     def __init__(
         self,
         api_url: str = "https://api.rembg.com/rmbg",
         api_key: Optional[str] = None,
-        output_format: str = "png",
         timeout: int = 30,
         max_retries: int = 3,
         backoff_delay: float = 1.0,
@@ -216,7 +209,6 @@ class RembgHostedRemover(BaseBackgroundRemover):
         """Initialize rembg.com remover client."""
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
-        self.output_format = output_format
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff_delay = backoff_delay
@@ -226,13 +218,13 @@ class RembgHostedRemover(BaseBackgroundRemover):
     def remove_background(
         self,
         image_data: bytes,
-        bg_color: Optional[str] = "#ffffff",
+        bg_color: Optional[str] = None,
     ) -> bytes:
         """Sends raw image bytes to rembg.com API with exponential backoff retries.
 
         Args:
             image_data: Raw input image bytes.
-            bg_color: Optional solid background color hex (e.g. "#ffffff").
+            bg_color: Optional hex fill (e.g. ``#FFFFFF``). Omitted for transparent output.
 
         Returns:
             bytes: Output image bytes directly from API.
@@ -262,20 +254,16 @@ class RembgHostedRemover(BaseBackgroundRemover):
             if self.api_key:
                 headers["x-api-key"] = self.api_key
 
-            data = {
-                "format": self.output_format,
-            }
-
-            if bg_color:
-                data["bg_color"] = bg_color
-
             files = {"image": ("image.jpg", image_data, "image/jpeg")}
+            form = {}
+            if bg_color:
+                form["bg_color"] = bg_color
 
             try:
                 response = requests.post(
                     self.api_url,
                     files=files,
-                    data=data,
+                    data=form or None,
                     headers=headers,
                     timeout=self.timeout,
                 )
@@ -359,12 +347,11 @@ class RembgHostedRemover(BaseBackgroundRemover):
         return payload
 
     def check_account_ready(self) -> Dict[str, Any]:
-        """Confirm rembg is reachable and credits > 60 or prepaidCredits > 0."""
+        """Confirm rembg is reachable and credits > 0 or prepaidCredits > 0."""
         payload = self.get_membership_usage()
         if not membership_has_credits(payload):
             raise RembgUnavailableError(
                 "Rembg account has no usable credits "
-                f"(credits={payload.get('credits')}, prepaidCredits={payload.get('prepaidCredits')}; "
-                f"need credits > {FREEMIUM_INCLUDED_CREDITS} or prepaidCredits > 0)"
+                f"(credits={payload.get('credits')}, prepaidCredits={payload.get('prepaidCredits')})"
             )
         return payload

@@ -22,14 +22,12 @@ def _setting(name: str, default: str = "") -> str:
 
 SHOPIFY_STORE_URL = _setting("SHOPIFY_STORE_URL")
 SHOPIFY_ADMIN_API_ACCESS_TOKEN = _setting("SHOPIFY_ADMIN_API_ACCESS_TOKEN")
-SHOPIFY_API_VERSION = _setting("SHOPIFY_API_VERSION", "2024-04")
+SHOPIFY_API_VERSION = _setting("SHOPIFY_API_VERSION", "2026-10")
 REMBG_API_URL = _setting("REMBG_API_URL", "https://api.rembg.com/rmbg")
 REMBG_API_KEY = _setting("REMBG_API_KEY")
-DEFAULT_BG_COLOR = _setting("DEFAULT_BG_COLOR", "#ffffff")
-DELETE_ORIGINAL = _setting("DELETE_ORIGINAL", "false").lower() == "true"
 
 from src.shopify import ShopifyGraphQLClient, ShopifyAPIError, RetryableShopifyError
-from src.shopify.store_host import resolve_shop_admin_host, shopify_admin_host
+from src.shopify.store_host import shopify_admin_host
 from src.removers import (
     RembgHostedRemover,
     BackgroundRemoverError,
@@ -39,6 +37,8 @@ from src.removers import (
 from src.queue.custom_metrics import increment_images_processed
 from src.queue.memory_stores import InMemoryLockStore
 from src.queue.queue_control import pause_product_queue
+from src.queue.base import product_lock_key
+from src.queue.shop_registry import get_shop_store
 from src.utils import applog
 
 # Global Product Lock Store for Worker
@@ -72,22 +72,37 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
         return {"status": "error", "message": "Missing product_id in payload"}, 400
 
     payload_shop = str(payload.get("shop_domain") or "")
-    shop_url = resolve_shop_admin_host(payload_shop, SHOPIFY_STORE_URL)
-    configured_host = shopify_admin_host(SHOPIFY_STORE_URL)
-    payload_host = shopify_admin_host(payload_shop)
-    if configured_host and payload_host and payload_host != configured_host:
-        applog.warning(
-            f"Ignoring shop_domain={payload_host}; using configured store {configured_host}"
-        )
-    token = SHOPIFY_ADMIN_API_ACCESS_TOKEN
-
+    shop_url = shopify_admin_host(payload_shop)
     if not shop_url:
         applog.error("Shopify store host is missing or is not a *.myshopify.com Admin host.")
         return {"status": "error", "message": "Invalid Shopify store host"}, 400
 
+    record = get_shop_store().get_shop(shop_url)
+    token = ""
+    if record:
+        token = str(record.get("accessToken") or "").strip()
+        if record.get("status") == "disconnected":
+            token = ""
     if not token:
-        applog.error("Missing Shopify credentials for background removal worker job.")
-        return {"status": "error", "message": "Shopify API credentials missing"}, 500
+        configured_host = shopify_admin_host(SHOPIFY_STORE_URL)
+        fallback_token = SHOPIFY_ADMIN_API_ACCESS_TOKEN
+        if fallback_token and (not configured_host or configured_host == shop_url):
+            token = fallback_token
+            record = None
+        else:
+            applog.info(f"[200 SKIPPED] Shop not registered: {shop_url}")
+            return {"status": "skipped", "reason": "Shop not registered"}, 200
+
+    if record is not None and not record.get("autoEnabled", False):
+        applog.info(f"[200 SKIPPED] autoEnabled is false for {shop_url}")
+        return {"status": "skipped", "reason": "autoEnabled is false"}, 200
+
+    images_scope = "all"
+    bg_color = None
+    if record is not None:
+        images_scope = str(record.get("imagesScope") or "all")
+        if record.get("fillMode") == "hex" and record.get("fillHex"):
+            bg_color = str(record.get("fillHex"))
 
     shopify_client = ShopifyGraphQLClient(
         store_url=shop_url,
@@ -97,15 +112,17 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
     remover = RembgHostedRemover(api_key=REMBG_API_KEY, api_url=REMBG_API_URL)
 
     active_lock_store = get_lock_store()
-    lock_key = f"lock:product:{product_id}"
+    lock_key = product_lock_key(shop_url, product_id)
     if not active_lock_store.acquire_lock(lock_key, ttl_seconds=120):
         applog.info(
-            f"[200 SKIPPED] Product lock active for {product_id}. Skipping duplicate worker run."
+            f"[200 SKIPPED] Product lock active for {shop_url} {product_id}. Skipping duplicate worker run."
         )
         return {"status": "skipped", "reason": "Product currently processing"}, 200
 
     try:
-        unprocessed_images = shopify_client.get_unprocessed_images(product_id)
+        unprocessed_images = shopify_client.get_unprocessed_images(
+            product_id, images_scope=images_scope
+        )
 
         if not unprocessed_images:
             applog.info(f"No unprocessed images for {product_id}")
@@ -120,8 +137,7 @@ def execute_background_removal_job(payload: Dict[str, Any]) -> Tuple[Dict[str, A
             remover=remover,
             product_id=product_id,
             unprocessed_images=unprocessed_images,
-            bg_color=DEFAULT_BG_COLOR,
-            delete_original=DELETE_ORIGINAL,
+            bg_color=bg_color,
         )
 
         applog.info(f"Processed {processed_count} image(s) for {product_id}")

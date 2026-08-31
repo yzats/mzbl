@@ -10,9 +10,6 @@ REMBG_API_URL = "https://api.rembg.com/rmbg"
 REMBG_API_KEY = "your-rembg-api-key"
 REMBG_TIMEOUT = 30  # Timeout in seconds for image processing requests
 
-# Default background replacement color (#ffffff or #ffffffff)
-DEFAULT_BG_COLOR = "#ffffff"
-
 # Shopify App Credentials & Store API settings
 SHOPIFY_STORE_URL = "your-shop.myshopify.com"
 SHOPIFY_CLIENT_ID = "your-shopify-client-id"

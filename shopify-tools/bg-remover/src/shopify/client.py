@@ -1,9 +1,24 @@
-import requests
 from typing import Optional, Dict, Any, List
-from .alt_helpers import has_alt_tag
+
+import requests
+
+from .metafields import (
+    is_processed_bg_state,
+    product_has_bg_skip,
+)
 from ..removers.base import RetryableBackgroundRemoverError, NonRetryableBackgroundRemoverError
 from ..utils import applog
 from ..utils.retry import retry_with_exponential_backoff
+
+
+def image_mime_type(filename: str) -> str:
+    """MIME type for a Shopify staged image upload from the filename suffix."""
+    lower = (filename or "").lower()
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+        return "image/jpeg"
+    return "image/webp"
 
 
 class ShopifyAPIError(Exception):
@@ -28,7 +43,7 @@ class ShopifyGraphQLClient:
         self,
         store_url: str,
         access_token: str,
-        api_version: str = "2024-04",
+        api_version: str = "2026-10",
         timeout: int = 30,
         max_retries: int = 3,
         backoff_delay: float = 1.0,
@@ -38,7 +53,7 @@ class ShopifyGraphQLClient:
         Args:
             store_url: Store domain (e.g. "my-store.myshopify.com" or "https://my-store.myshopify.com").
             access_token: Admin API access token ("shpat_...").
-            api_version: Shopify API version (default: "2024-04").
+            api_version: Shopify API version (default: "2026-10").
             timeout: Request timeout in seconds.
             max_retries: Retry attempts for transient errors.
             backoff_delay: Initial retry backoff delay in seconds.
@@ -109,17 +124,18 @@ class ShopifyGraphQLClient:
         product_id: str,
         limit: Optional[int] = None,
         sequence: Optional[int] = None,
+        images_scope: str = "all",
     ) -> List[Dict[str, Any]]:
-        """Fetch details of unprocessed images of a Shopify product.
+        """Fetch IMAGE media whose `$app.bg_state` is empty.
 
-        An image is considered already processed (and skipped) if:
-          - alt text contains 'hide' or 'bg-removed'
-          - image URL contains 'bg-removed'
+        Skips the whole product when it is tagged `bg_skip`. Skips media with
+        `$app.bg_state` ``source`` or ``result``. Does not inspect alt text.
 
         Args:
             product_id: Shopify product ID.
             limit: Optional maximum number of images to return.
             sequence: Optional 1-based sequence index of the specific image to target.
+            images_scope: ``all`` or ``featured`` (first IMAGE only).
 
         Returns:
             List[Dict[str, Any]]: List of image detail dicts.
@@ -134,6 +150,7 @@ class ShopifyGraphQLClient:
           product(id: $id) {
             id
             title
+            tags
             media(first: 50) {
               nodes {
                 id
@@ -141,6 +158,9 @@ class ShopifyGraphQLClient:
                 status
                 alt
                 ... on MediaImage {
+                  bgState: metafield(key: "bg_state") {
+                    value
+                  }
                   image {
                     id
                     url
@@ -159,68 +179,69 @@ class ShopifyGraphQLClient:
         if not product:
             raise NonRetryableShopifyError(f"Product not found for ID: {gql_product_id}")
 
+        if product_has_bg_skip(product.get("tags")):
+            applog.info(f"Product {gql_product_id} tagged bg_skip; skipping.")
+            return []
+
         media_nodes = product.get("media", {}).get("nodes", [])
         if not media_nodes:
             return []
 
-        # Filter only IMAGE media types
         image_nodes = [m for m in media_nodes if m.get("mediaContentType") == "IMAGE"]
+        if images_scope == "featured" and sequence is None:
+            image_nodes = image_nodes[:1]
 
-        # If sequence is specified (1-based index), target that specific image node
-        if sequence is not None:
-            seq_idx = sequence - 1
-            if seq_idx < 0 or seq_idx >= len(image_nodes):
-                raise NonRetryableShopifyError(
-                    f"Invalid sequence number {sequence}. Product has {len(image_nodes)} image(s)."
-                )
-            target_node = image_nodes[seq_idx]
-            # Find its actual position in media_nodes list
-            media_pos = media_nodes.index(target_node)
-            image_info = target_node.get("image") or {}
-            raw_alt = target_node.get("alt") or image_info.get("altText") or ""
-
-            if has_alt_tag(raw_alt, "hide") or has_alt_tag(raw_alt, "bg-removed") or "bg-removed" in raw_alt.lower() or "bg-removed" in (image_info.get("url") or "").lower():
-                applog.debug(f"Image at sequence {sequence} is already marked as processed/hidden.")
-
-            return [{
-                "media_id": target_node.get("id"),
+        def _image_dict(node: Dict[str, Any], position: int, seq: Optional[int] = None) -> Dict[str, Any]:
+            image_info = node.get("image") or {}
+            raw_alt = node.get("alt") or image_info.get("altText") or ""
+            bg_meta = node.get("bgState") or {}
+            bg_state = (bg_meta.get("value") if isinstance(bg_meta, dict) else None) or ""
+            info = {
+                "media_id": node.get("id"),
                 "image_id": image_info.get("id"),
                 "url": image_info.get("url"),
                 "alt_text": raw_alt,
-                "position": media_pos,
-                "sequence": sequence,
+                "position": position,
                 "width": image_info.get("width"),
                 "product_id": product.get("id"),
                 "product_title": product.get("title"),
-            }]
+                "bg_state": bg_state,
+            }
+            if seq is not None:
+                info["sequence"] = seq
+            return info
+
+        if sequence is not None:
+            seq_idx = sequence - 1
+            all_images = [m for m in media_nodes if m.get("mediaContentType") == "IMAGE"]
+            if seq_idx < 0 or seq_idx >= len(all_images):
+                raise NonRetryableShopifyError(
+                    f"Invalid sequence number {sequence}. Product has {len(all_images)} image(s)."
+                )
+            target_node = all_images[seq_idx]
+            media_pos = media_nodes.index(target_node)
+            bg_meta = target_node.get("bgState") or {}
+            bg_state = (bg_meta.get("value") if isinstance(bg_meta, dict) else None) or ""
+            if is_processed_bg_state(bg_state):
+                applog.debug(
+                    f"Image at sequence {sequence} already has $app.bg_state={bg_state!r}."
+                )
+                return []
+            return [_image_dict(target_node, media_pos, sequence)]
 
         unprocessed = []
         for idx, media in enumerate(media_nodes):
             if media.get("mediaContentType") != "IMAGE":
                 continue
-
-            image_info = media.get("image") or {}
-            raw_alt = media.get("alt") or image_info.get("altText") or ""
-            
-            # Check if already marked 'hide' or 'bg-removed' as comma-separated tags or substring
-            if has_alt_tag(raw_alt, "hide") or has_alt_tag(raw_alt, "bg-removed") or "bg-removed" in raw_alt.lower():
+            if images_scope == "featured" and media not in image_nodes:
                 continue
 
-            # Check if image URL/filename already indicates bg-removed
-            img_url = image_info.get("url") or ""
-            if "bg-removed" in img_url.lower():
+            bg_meta = media.get("bgState") or {}
+            bg_state = (bg_meta.get("value") if isinstance(bg_meta, dict) else None) or ""
+            if is_processed_bg_state(bg_state):
                 continue
 
-            unprocessed.append({
-                "media_id": media.get("id"),
-                "image_id": image_info.get("id"),
-                "url": image_info.get("url"),
-                "alt_text": raw_alt,
-                "position": idx,
-                "width": image_info.get("width"),
-                "product_id": product.get("id"),
-                "product_title": product.get("title"),
-            })
+            unprocessed.append(_image_dict(media, idx))
 
             if limit is not None and len(unprocessed) >= limit:
                 break
@@ -262,17 +283,15 @@ class ShopifyGraphQLClient:
         return _fetch()
 
     def create_staged_upload(
-        self, filename: str, mime_type: str = "image/png"
+        self, filename: str, mime_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a staged upload target URL for uploading new image bytes to Shopify.
 
         Args:
-            filename: Name of the file (e.g. "product-bg-removed.png").
-            mime_type: MIME type of the file (default: "image/png").
-
-        Returns:
-            Dict[str, Any]: Staged upload target parameters containing url, resourceUrl, and parameters list.
+            filename: Name of the file (e.g. "product-bg-removed.webp").
+            mime_type: MIME type of the file. Defaults from the filename suffix.
         """
+        mime_type = mime_type or image_mime_type(filename)
         mutation = """
         mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
           stagedUploadsCreate(input: $input) {
@@ -316,7 +335,7 @@ class ShopifyGraphQLClient:
         return targets[0]
 
     def upload_file_to_staged_target(
-        self, staged_target: Dict[str, Any], file_bytes: bytes, filename: str = "image.png"
+        self, staged_target: Dict[str, Any], file_bytes: bytes, filename: str = "image.webp"
     ) -> str:
         """Upload raw file bytes to Shopify's staged upload target URL (Google Cloud Storage / S3).
 
@@ -336,7 +355,7 @@ class ShopifyGraphQLClient:
         for p in params:
             form_data[p["name"]] = p["value"]
 
-        files = {"file": (filename, file_bytes, "image/png")}
+        files = {"file": (filename, file_bytes, image_mime_type(filename))}
 
         try:
             resp = requests.post(upload_url, data=form_data, files=files, timeout=self.timeout)
@@ -367,7 +386,7 @@ class ShopifyGraphQLClient:
 
         Args:
             product_id: Shopify product ID (e.g. "gid://shopify/Product/12345").
-            media_items: List of dicts, e.g. [{"originalSource": "...", "alt": "bg-removed"}]
+            media_items: List of dicts, e.g. [{"originalSource": "...", "alt": original_alt}]
 
         Returns:
             List[Dict[str, Any]]: List of created media objects.
@@ -560,3 +579,40 @@ class ShopifyGraphQLClient:
             raise NonRetryableShopifyError(f"productReorderMedia failed: {err_msg}")
 
         return True
+
+    def set_media_bg_state(self, metafields: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """Write `$app.bg_state` on MediaImage nodes via one batched metafieldsSet.
+
+        Args:
+            metafields: List of metafieldsSet inputs (ownerId, key, type, value).
+                Namespace is omitted so Shopify defaults to ``$app``.
+
+        Returns:
+            List of written metafield objects.
+        """
+        if not metafields:
+            return []
+
+        mutation = """
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields {
+              id
+              key
+              value
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        data = self._execute_query(mutation, {"metafields": metafields})
+        result = data.get("metafieldsSet", {})
+        errors = result.get("userErrors", [])
+        if errors:
+            err_msg = "; ".join(f"{e.get('field')}: {e.get('message')}" for e in errors)
+            raise NonRetryableShopifyError(f"metafieldsSet failed: {err_msg}")
+
+        return result.get("metafields", []) or []

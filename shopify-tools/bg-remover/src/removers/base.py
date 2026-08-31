@@ -47,14 +47,13 @@ class BaseBackgroundRemover(ABC):
     def remove_background(
         self,
         image_data: bytes,
-        bg_color: Optional[str] = "#FFFFFF",
+        bg_color: Optional[str] = None,
     ) -> bytes:
         """Remove background from image bytes.
 
         Args:
             image_data: Raw input image bytes (JPEG, PNG, WEBP, etc.).
-            bg_color: Hex color code for new background (e.g., "#FFFFFF" for white, None/"" for transparent).
-                      Defaults to white ("#FFFFFF").
+            bg_color: Optional hex fill. Omitted so rembg default is transparent.
 
         Returns:
             bytes: Raw output image bytes with background processed/replaced.

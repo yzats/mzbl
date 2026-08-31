@@ -27,6 +27,9 @@ PYTHONPATH=shopify-tools/bg-remover:shopify-tools uv run pytest shopify-tools/bg
 
 # 3. Start local Functions Framework server (runs Receiver on http://localhost:8080)
 PYTHONPATH=shopify-tools/bg-remover:shopify-tools uv run python3 shopify-tools/bg-remover/run_local_server.py
+
+# Optional: control-plane API on http://localhost:8081 (X-Bg-Control-Secret)
+PYTHONPATH=shopify-tools/bg-remover:shopify-tools uv run python3 shopify-tools/bg-remover/run_local_control.py
 ```
 
 ### Local Testing with Live Shopify Webhooks
@@ -65,6 +68,7 @@ github_repo_name           = "mzbl"
 shopify_webhook_secret     = "your_webhook_secret"
 shopify_admin_access_token = "shpat_your_token"
 rembg_api_key              = "your_rembg_key"
+gcp_control_secret         = "your_control_plane_shared_secret"
 ```
 
 ### GitHub PAT & Secret Automation
@@ -115,7 +119,7 @@ Deployments are strictly **manual** and separate from automated testing.
 2. Click **Deploy Shopify Background Remover to GCP** on the left sidebar.
 3. Click **Run workflow** dropdown $\rightarrow$ Select `main` branch $\rightarrow$ Click **Run workflow**.
 
-The workflow runs `shopify-tools/bg-remover/deploy_gcp.sh` to deploy `shopify_webhook_receiver` and `bg_remover_worker` v2 Cloud Functions. Infrastructure (APIs, queues, IAM, secrets) must already exist from `terraform apply`. After changing Terraform IAM, run `terraform apply` locally **before** re-running the GitHub Actions deploy workflow.
+The workflow runs `shopify-tools/bg-remover/deploy_gcp.sh` to deploy `shopify_webhook_receiver`, `bg_remover_worker`, `rembg_circuit_probe`, and `bg_remover_control` v2 Cloud Functions. Infrastructure (APIs, queues, IAM, secrets) must already exist from `terraform apply`. After changing Terraform IAM, run `terraform apply` locally **before** re-running the GitHub Actions deploy workflow.
 
 ---
 

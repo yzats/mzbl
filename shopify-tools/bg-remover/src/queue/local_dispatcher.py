@@ -2,7 +2,7 @@ import threading
 from typing import Dict, Any, Optional, Callable
 
 from src.utils import applog
-from .base import BaseTaskDispatcher, BaseLockStore, DispatchResult
+from .base import BaseTaskDispatcher, BaseLockStore, DispatchResult, product_lock_key
 from .memory_stores import InMemoryLockStore
 
 
@@ -39,10 +39,10 @@ class LocalTaskDispatcher(BaseTaskDispatcher):
             "metadata": metadata or {},
         }
 
-        task_id = f"local-task-{product_id.split('/')[-1]}"
+        task_id = f"local-task-{shop_domain.split('.')[0]}-{product_id.split('/')[-1]}"
 
         def _runner():
-            lock_key = f"lock:product:{product_id}"
+            lock_key = product_lock_key(shop_domain, product_id)
             if not self.lock_store.acquire_lock(lock_key, ttl_seconds=120):
                 applog.info(
                     f"[SKIPPED] Local worker product lock active for {product_id} task={task_id}"

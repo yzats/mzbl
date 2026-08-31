@@ -24,7 +24,7 @@ def _png_bytes(width: int, height: int) -> bytes:
 class DummyRemover(BaseBackgroundRemover):
     """Concrete implementation for testing abstract base class."""
     def remove_background(
-        self, image_data: bytes, bg_color: str | None = "#ffffff"
+        self, image_data: bytes, bg_color: str | None = None
     ) -> bytes:
         if not image_data:
             raise NonRetryableBackgroundRemoverError("Empty image")
@@ -50,7 +50,7 @@ def test_rembg_hosted_remover_success(mocker):
     mocker.patch("requests.post", return_value=mock_response)
 
     remover = RembgHostedRemover(api_url="https://api.rembg.com/rmbg", api_key="secret-token")
-    result = remover.remove_background(fake_input_image, bg_color="#ffffff")
+    result = remover.remove_background(fake_input_image)
 
     assert result == fake_output_image
     requests.post.assert_called_once()
@@ -58,7 +58,7 @@ def test_rembg_hosted_remover_success(mocker):
     call_args, call_kwargs = requests.post.call_args
     assert call_args[0] == "https://api.rembg.com/rmbg"
     assert call_kwargs["headers"] == {"x-api-key": "secret-token"}
-    assert call_kwargs["data"] == {"format": "png", "bg_color": "#ffffff"}
+    assert not call_kwargs.get("data")
     assert "image" in call_kwargs["files"]
 
 
@@ -234,8 +234,8 @@ def test_rembg_error_message_texts_single_and_multiple():
 def test_membership_has_credits():
     from src.removers.rembg_http import membership_has_credits
 
-    assert membership_has_credits({"credits": 60, "prepaidCredits": 0}) is False
-    assert membership_has_credits({"credits": 61, "prepaidCredits": 0}) is True
+    assert membership_has_credits({"credits": 1, "prepaidCredits": 0}) is True
+    assert membership_has_credits({"credits": 60, "prepaidCredits": 0}) is True
     assert membership_has_credits({"credits": 0, "prepaidCredits": 3}) is True
     assert membership_has_credits({"credits": 0, "prepaidCredits": 0}) is False
     assert membership_has_credits({}) is False

@@ -10,24 +10,23 @@ try:
     import config
     SHOPIFY_STORE_URL = getattr(config, "SHOPIFY_STORE_URL", "")
     SHOPIFY_ADMIN_API_ACCESS_TOKEN = getattr(config, "SHOPIFY_ADMIN_API_ACCESS_TOKEN", "")
-    SHOPIFY_API_VERSION = getattr(config, "SHOPIFY_API_VERSION", "2024-04")
+    SHOPIFY_API_VERSION = getattr(config, "SHOPIFY_API_VERSION", "2026-10")
     REMBG_API_URL = getattr(config, "REMBG_API_URL", "https://api.rembg.com/rmbg")
     REMBG_API_KEY = getattr(config, "REMBG_API_KEY", "")
-    DEFAULT_BG_COLOR = getattr(config, "DEFAULT_BG_COLOR", "#ffffff")
-    DELETE_ORIGINAL = getattr(config, "DELETE_ORIGINAL", False)
 except ImportError:
     SHOPIFY_STORE_URL = ""
     SHOPIFY_ADMIN_API_ACCESS_TOKEN = ""
-    SHOPIFY_API_VERSION = "2024-04"
+    SHOPIFY_API_VERSION = "2026-10"
     REMBG_API_URL = "https://api.rembg.com/rmbg"
     REMBG_API_KEY = ""
-    DEFAULT_BG_COLOR = "#ffffff"
-    DELETE_ORIGINAL = False
 
 from src.shopify import (
     ShopifyGraphQLClient,
     ShopifyAPIError,
-    append_alt_tag,
+    BG_STATE_RESULT,
+    BG_STATE_SOURCE,
+    bg_source_metafield,
+    bg_state_metafield,
 )
 from src.removers import (
     RembgHostedRemover,
@@ -43,15 +42,15 @@ def process_product_batch(
     remover: RembgHostedRemover,
     product_id: str,
     unprocessed_images: list,
-    bg_color: str,
-    delete_original: bool = False,
+    bg_color: str | None = None,
 ) -> int:
     """Process all unprocessed images for a product in a batched pipeline.
 
     1. Removes backgrounds & uploads staged files for all images.
-    2. Batches creation of new media (`productCreateMedia`).
-    3. Batches reordering of new media (`productReorderMedia`).
-    4. Batches updating original media alt text (`productUpdateMedia`) or deletion (`productDeleteMedia`).
+    2. Batches creation of new media (`productCreateMedia`) with original alt copied.
+    3. Batches reordering of new media (`productReorderMedia`). Originals are always kept.
+    4. Batches metafield writes (`metafieldsSet`): `$app.bg_state=result` and `$app.bg_source`
+       (original GID) on new media; `$app.bg_state=source` on originals.
     """
     if not unprocessed_images:
         return 0
@@ -65,7 +64,7 @@ def process_product_batch(
         original_url = img_info["url"]
         pos = str(img_info.get("position", 0))
         clean_id = media_id.split("/")[-1]
-        upload_filename = f"{clean_id}-bg-removed.png"
+        upload_filename = f"{clean_id}-bg-removed.webp"
 
         try:
             orig_bytes = shopify_client.download_image_bytes(original_url)
@@ -95,9 +94,9 @@ def process_product_batch(
             raise failed_images[0][1]
         return 0
 
-    # Step 2: Batched productCreateMedia
+    # Step 2: Batched productCreateMedia — copy original alt, do not write flags
     create_payload = [
-        {"originalSource": item["resource_url"], "alt": "bg-removed"}
+        {"originalSource": item["resource_url"], "alt": item["original_alt"]}
         for item in prepared_items
     ]
     created_media_list = shopify_client.create_product_media_batch(
@@ -105,37 +104,30 @@ def process_product_batch(
         media_items=create_payload,
     )
 
-    # Step 3: Batched productReorderMedia & update/delete originals
+    # Step 3: Batched productReorderMedia (originals always kept; no alt updates)
     moves = []
-    original_updates = []
-    original_deletes = []
+    metafields = []
 
     for item, created_media in zip(prepared_items, created_media_list):
         new_media_id = created_media.get("id")
+        orig_id = item["original_media_id"]
         if new_media_id:
             moves.append({
                 "id": new_media_id,
                 "newPosition": item["target_position"],
             })
+            metafields.append(bg_state_metafield(new_media_id, BG_STATE_RESULT))
+            if orig_id:
+                metafields.append(bg_source_metafield(new_media_id, orig_id))
 
-        orig_id = item["original_media_id"]
         if orig_id:
-            if delete_original:
-                original_deletes.append(orig_id)
-            else:
-                updated_alt = append_alt_tag(item["original_alt"], "hide")
-                original_updates.append({
-                    "id": orig_id,
-                    "alt": updated_alt,
-                })
+            metafields.append(bg_state_metafield(orig_id, BG_STATE_SOURCE))
 
     if moves:
         shopify_client.reorder_product_media(product_id=product_id, moves=moves)
 
-    if original_deletes:
-        shopify_client.delete_product_media(product_id=product_id, media_ids=original_deletes)
-    elif original_updates:
-        shopify_client.update_product_media_batch(product_id=product_id, updates=original_updates)
+    if metafields:
+        shopify_client.set_media_bg_state(metafields)
 
     return len(prepared_items)
 
@@ -145,8 +137,7 @@ def process_image(
     remover: RembgHostedRemover,
     product_id: str,
     image_info: dict,
-    bg_color: str,
-    delete_original: bool = False,
+    bg_color: str | None = None,
 ) -> None:
     """Process a single image using process_product_batch."""
     process_product_batch(
@@ -155,7 +146,6 @@ def process_image(
         product_id=product_id,
         unprocessed_images=[image_info],
         bg_color=bg_color,
-        delete_original=delete_original,
     )
 
 
@@ -216,8 +206,6 @@ def main():
             remover=remover,
             product_id=args.product_id,
             unprocessed_images=unprocessed_images,
-            bg_color=DEFAULT_BG_COLOR,
-            delete_original=DELETE_ORIGINAL,
         )
 
         print(f"\n✨ Done! Processed {len(unprocessed_images)} image(s) on product {args.product_id}.")

@@ -1,7 +1,7 @@
 import hashlib
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from src.utils import applog
-from .base import BaseLockStore, BaseDedupStore
+from .base import BaseLockStore, BaseDedupStore, BaseShopStore
 
 
 def firestore_document_id(key: str) -> str:
@@ -107,3 +107,56 @@ class GCPFirestoreDedupStore(BaseDedupStore):
             })
         except Exception as e:
             applog.warning(f"Firestore remember error for {key}: {e}")
+
+
+class GCPFirestoreShopStore(BaseShopStore):
+    """Firestore `shops` collection keyed by SHA-256 of the shop domain."""
+
+    def __init__(self, collection_name: str = "shops", project_id: Optional[str] = None):
+        self.collection_name = collection_name
+        self.project_id = project_id
+        try:
+            from google.cloud import firestore
+            self.db = firestore.Client(project=project_id)
+        except Exception as e:
+            self.db = None
+            applog.warning(f"FirestoreShopStore client unavailable ({e}); operating in mock mode.")
+
+    def get_shop(self, shop: str) -> Optional[Dict[str, Any]]:
+        key = (shop or "").strip().lower()
+        if not key or not self.db:
+            return None
+        try:
+            doc = self.db.collection(self.collection_name).document(firestore_document_id(key)).get()
+            if not doc.exists:
+                return None
+            return doc.to_dict() or {}
+        except Exception as e:
+            applog.warning(f"Firestore get_shop error for {key}: {e}")
+            return None
+
+    def upsert_shop(self, shop: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        import time
+        key = (shop or "").strip().lower()
+        merged = {**fields, "shop": key, "updatedAt": time.time()}
+        if not self.db:
+            return merged
+        try:
+            doc_ref = self.db.collection(self.collection_name).document(firestore_document_id(key))
+            existing = doc_ref.get()
+            current = existing.to_dict() if existing.exists else {}
+            merged = {**(current or {}), **merged}
+            doc_ref.set(merged)
+            return merged
+        except Exception as e:
+            applog.warning(f"Firestore upsert_shop error for {key}: {e}")
+            return merged
+
+    def delete_shop(self, shop: str) -> None:
+        key = (shop or "").strip().lower()
+        if not key or not self.db:
+            return
+        try:
+            self.db.collection(self.collection_name).document(firestore_document_id(key)).delete()
+        except Exception as e:
+            applog.warning(f"Firestore delete_shop error for {key}: {e}")

@@ -10,11 +10,11 @@ try:
     import config
     SHOPIFY_STORE_URL = getattr(config, "SHOPIFY_STORE_URL", "")
     SHOPIFY_ADMIN_API_ACCESS_TOKEN = getattr(config, "SHOPIFY_ADMIN_API_ACCESS_TOKEN", "")
-    SHOPIFY_API_VERSION = getattr(config, "SHOPIFY_API_VERSION", "2024-04")
+    SHOPIFY_API_VERSION = getattr(config, "SHOPIFY_API_VERSION", "2026-10")
 except ImportError:
     SHOPIFY_STORE_URL = ""
     SHOPIFY_ADMIN_API_ACCESS_TOKEN = ""
-    SHOPIFY_API_VERSION = "2024-04"
+    SHOPIFY_API_VERSION = "2026-10"
 
 from src.shopify import ShopifyGraphQLClient, ShopifyAPIError
 

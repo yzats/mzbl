@@ -88,8 +88,7 @@ def probe_rembg_and_resume() -> Dict[str, Any]:
         reset_canary_backoff()
         reason = (
             "Rembg account has no usable credits "
-            f"(credits={usage.get('credits')}, prepaidCredits={usage.get('prepaidCredits')}; "
-            "need credits > 60 or prepaidCredits > 0)"
+            f"(credits={usage.get('credits')}, prepaidCredits={usage.get('prepaidCredits')})"
         )
         paused = is_product_queue_paused()
         return _open_result(reason, paused, usage)

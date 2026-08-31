@@ -8,7 +8,7 @@
 
 ## 📌 1. Executive Summary & Objectives
 
-The **Shopify Background Remover** is a pluggable, serverless, rate-limited, and idempotent pipeline that automatically removes backgrounds from Shopify product images when products are created or updated, replacing them with clean PNGs (defaulting to a solid white background `#ffffff`).
+The **Shopify Background Remover** is a pluggable, serverless, rate-limited, and idempotent pipeline that automatically removes backgrounds from Shopify product images when products are created or updated. Default rembg output is **transparent WebP**. When a shop’s Autopilot BgRemover config uses `fillMode=hex`, the worker sends `bg_color` on `/rmbg`.
 
 ### Key Objectives
 - **Zero Human Intervention:** Runs automatically in the background via Shopify HTTP Webhooks.
@@ -47,15 +47,16 @@ The **Shopify Background Remover** is a pluggable, serverless, rate-limited, and
                                ┌─────────────────────────────────────────────────────────┐
                                │              STAGE 5: WORKER FUNCTION                   │
                                │                                                         │
-                               │  1. Acquire ProductLock(product_id)                     │
-                               │  2. Query get_unprocessed_images() via GraphQL          │
-                               │  3. Download original CDN image bytes                   │
-                               │  4. Send to RembgHostedRemover API (default sizing)     │
-                               │  5. Upload staged file (stagedUploadsCreate)            │
-                               │  6. Batch GraphQL: productCreateMedia                   │
-                               │  7. Batch GraphQL: productReorderMedia                  │
-                               │  8. Batch GraphQL: productUpdateMedia (alt="hide")      │
-                               │  9. Release ProductLock(product_id)                     │
+                               │  1. Acquire ProductLock(shop_domain, product_id)        │
+                               │  2. Load shop token from registry (or local fallback)   │
+                               │  3. Query get_unprocessed_images() (`$app.bg_state`)    │
+                               │  4. Download original CDN image bytes                   │
+                               │  5. Send to RembgHostedRemover API (hex fill optional)  │
+                               │  6. Upload staged file (stagedUploadsCreate)            │
+                               │  7. Batch GraphQL: productCreateMedia (copy original alt)│
+                               │  8. Batch GraphQL: productReorderMedia                  │
+                               │  9. metafieldsSet bg_state + bg_source (keep originals) │
+                               │ 10. Release ProductLock                                 │
                                └─────────────────────────────────────────────────────────┘
 ```
 
@@ -70,22 +71,23 @@ Layer 1: Webhook ID Guard (DedupStore)
   └── Drop retransmitted webhooks using X-Shopify-Webhook-Id header (5 min TTL).
 
 Layer 2: Named Task Queue Guard (GCP Cloud Tasks / Local Task ID)
-  └── Task Name = task-product-{clean_pid}-{pid_hash}-{update_hash}.
-      Coalesces in-flight duplicates of the same Shopify updated_at.
+  └── Task Name = task-product-{shop_hash}-{clean_pid}-{pid_hash}-{update_hash}.
+      Coalesces in-flight duplicates of the same shop + Shopify updated_at.
       A later product edit gets a new name (Cloud Tasks tombstones names ~1 hour).
 
 Layer 3: Distributed Worker Lock (ProductLock)
-  └── Acquires 2-minute lock per product_id before starting. Concurrent runs exit immediately.
+  └── Acquires 2-minute lock lock:product:{shop_domain}:{product_id}. Concurrent runs exit immediately.
 
-Layer 4: Media-Level Alt Text Guard (get_unprocessed_images)
-  └── Checks image alt text and CDN URL. Skips any image tagged 'hide' or 'bg-removed'.
+Layer 4: Media-Level `$app.bg_state` Guard (get_unprocessed_images)
+  └── Skip product tag `bg_skip`. Skip media with bg_state source or result. Empty = process.
+      Result media also stores `$app.bg_source` (original MediaImage GID). Alt is copied, never a flag.
 ```
 
 ### Layer Details:
 1. **Layer 1 (Receiver Level):** Verifies `X-Shopify-Hmac-Sha256` **first**. Only then does it consult `X-Shopify-Webhook-Id`. Failed HMAC must not record the id (`was_seen` / `remember`, not mark-on-read `is_duplicate`). If Shopify re-sends the same id within 5 minutes, the receiver logs `[200 SKIPPED]`, returns `"status": "ignored"`.
-2. **Layer 2 (Queue Level):** In GCP, task names are `projects/.../tasks/task-product-{clean_pid}-{pid_hash}-{update_hash}`. `update_hash` is SHA-256[:12] of Shopify `updated_at` (fallback: webhook id, then a 30-second time bucket). Cloud Tasks uniqueness therefore drops **duplicate deliveries of the same product revision** while a task is queued/running, without blocking a new image upload an hour later. Completed names remain tombstoned for ~1 hour, but only for that revision's name. A hit logs `[TASK DEDUPED]` / `[200 DEDUPED]` at WARNING and returns `"status": "deduplicated"`.
-3. **Layer 3 (Worker Level):** A distributed lock `lock:product:{product_id}` is acquired before worker processing begins. If another worker thread is actively processing the same product, the new worker logs `Product lock active` and terminates cleanly (HTTP 200).
-4. **Layer 4 (Media State Level):** The worker queries Shopify GraphQL for live product media and skips any image where `alt` contains `hide` or `bg-removed`, or where the CDN URL contains `bg-removed`. When all images are tagged, the worker exits in `<100ms`.
+2. **Layer 2 (Queue Level):** In GCP, task names are `projects/.../tasks/task-product-{shop_hash}-{clean_pid}-{pid_hash}-{update_hash}`. `shop_hash` is SHA-256[:8] of the shop domain (product IDs are per-shop). `update_hash` is SHA-256[:12] of Shopify `updated_at` (fallback: webhook id, then a 30-second time bucket). Cloud Tasks uniqueness therefore drops **duplicate deliveries of the same shop+product revision** while a task is queued/running, without blocking a new image upload an hour later. Completed names remain tombstoned for ~1 hour, but only for that revision's name. A hit logs `[TASK DEDUPED]` / `[200 DEDUPED]` at WARNING and returns `"status": "deduplicated"`.
+3. **Layer 3 (Worker Level):** A distributed lock `lock:product:{shop_domain}:{product_id}` is acquired before worker processing begins. If another worker thread is actively processing the same product on that shop, the new worker logs `Product lock active` and terminates cleanly (HTTP 200).
+4. **Layer 4 (Media State Level):** The worker queries Shopify GraphQL for live product media. The product tag `bg_skip` skips the whole product. Each MediaImage `$app.bg_state` is `source` (original we processed), `result` (background-removed output), or empty (not processed). Skip `source` and `result`. Originals are always kept. Result media stores `$app.bg_source` with the original MediaImage GID (pairing, not a skip flag). Copy the original `alt` onto new media; do not write flags into alt. When nothing is left to process, the worker exits in `<100ms`.
 
 ---
 
@@ -96,12 +98,12 @@ All major subsystems use abstract interfaces to support provider swapping (e.g. 
 ### A. Background Remover Interface (`src/removers/`)
 - **`BaseBackgroundRemover` (`base.py`)**:
   ```python
-  def remove_background(self, image_data: bytes, bg_color: Optional[str] = "#ffffff") -> bytes
+  def remove_background(self, image_data: bytes, bg_color: Optional[str] = None) -> bytes
   ```
 - **`RembgHostedRemover` (`rembg_http.py`)**:
   - Sends raw image bytes to rembg API (`https://api.rembg.com/rmbg`).
   - **No `height` parameter is sent** — lets rembg perform default image processing and sizing.
-  - Formats payloads with `format="png"` and `bg_color="#ffffff"`.
+  - Multipart `image` plus `x-api-key`. **Do not send `format`**. Omit `bg_color` for transparent WebP; send `bg_color` only when the shop config `fillMode` is `hex`.
   - Classifies HTTP errors (`RetryableBackgroundRemoverError`, `RembgUnavailableError`, `NonRetryableBackgroundRemoverError`). On HTTP 200, rejects free-tier **460×460** API output via `output_is_freemium_capped` (see below).
 
 ### B. Task Dispatcher Interface (`src/queue/`)
@@ -115,12 +117,30 @@ All major subsystems use abstract interfaces to support provider swapping (e.g. 
   ```
   Dedup is **not silent**: Cloud Tasks `ALREADY_EXISTS` and duplicate webhook IDs emit one structured line (`src/utils/applog.py`) with `severity` + `message` (no `print` + `logger` doubles). Expected skips/dedup/enqueue are **INFO**; HMAC 401 is **WARNING**; poison/enqueue failure is **ERROR**. Circuit OPEN/STILL OPEN are **WARNING**; CLOSED and “queue already running” are **INFO**. Tags (`[TASK DEDUPED]`, `[200 DEDUPED]`, `[CIRCUIT OPEN]`, …) stay in `message` for log-based metrics. The HTTP JSON body uses `"status": "deduplicated"` or `"status": "ignored"` instead of `"success"`.
 - **`LocalTaskDispatcher` (`local_dispatcher.py`)**: Dispatches tasks in background Python daemon threads for local development.
-- **`GCPCloudTasksDispatcher` (`gcp_dispatcher.py`)**: Named Cloud Tasks `task-product-{clean_pid}-{pid_hash}-{update_hash}` so the same Shopify `updated_at` is coalesced, but a later edit is not blocked by the 1-hour name tombstone.
+- **`GCPCloudTasksDispatcher` (`gcp_dispatcher.py`)**: Named Cloud Tasks `task-product-{shop_hash}-{clean_pid}-{pid_hash}-{update_hash}` so the same shop + Shopify `updated_at` is coalesced, but a later edit is not blocked by the 1-hour name tombstone.
 
 ### C. Lock & Deduplication Stores (`src/queue/`)
 - **`BaseLockStore` (`base.py`)** & **`BaseDedupStore` (`base.py`)**: Abstract contracts for locks and webhook-id dedup (`was_seen` / `remember`; `is_duplicate` is check-then-remember).
 - **`InMemoryLockStore` & `InMemoryDedupStore` (`memory_stores.py`)**: In-memory dict-based stores with TTL expiration for local development.
 - **`GCPFirestoreLockStore` & `GCPFirestoreDedupStore` (`firestore_stores.py`)**: GCP Cloud Firestore implementations (`product_locks` and `webhook_dedup` collections) with TTL policy support. Document IDs are `firestore_document_id(key)` (SHA-256 hex) because Shopify GIDs contain `/`. Client construction catches missing credentials / import errors so unit tests and local runs without ADC do not crash.
+
+### D. Shop registry (`src/queue/`)
+- **`BaseShopStore` (`base.py`)**: `get_shop` / `upsert_shop` / `delete_shop`. Document ID is SHA-256 of the `*.myshopify.com` host. Never log `accessToken`.
+- **`InMemoryShopStore` (`memory_stores.py`)** & **`GCPFirestoreShopStore` (`firestore_stores.py`, `shops` collection)**. Local CLI keeps `config.py` token fallback when the shop is **not** in the registry (and the configured `SHOPIFY_STORE_URL` is empty or matches that host).
+- **`product_lock_key(shop_domain, product_id)`** → `lock:product:{shop_domain}:{product_id}` (product IDs are per-shop).
+
+### E. Control-plane HTTP API (`src/control/api.py`)
+Public HTTPS Cloud Function `bg_remover_control` (not Shopify HMAC). Header `X-Bg-Control-Secret` must match Secret Manager / env `GCP_CONTROL_SECRET`. Writes return `{ ok: true }`. Status JSON matches Autopilot BgRemover `ShopStatus` with `placeholder: false`; credits/progress are zeros or null until billing.
+
+| App client | HTTP | Body / query |
+|------------|------|----------------|
+| `registerShop` | `POST /v1/shops/register` | `{ shop, accessToken, scope? }` |
+| `unregisterShop` | `POST /v1/shops/unregister` | `{ shop }` |
+| `setConfig` | `PUT /v1/shops/config` | `{ shop, autoEnabled, fillMode, fillHex, imagesScope, forceReprocessDefault }` |
+| `getShopStatus` | `GET /v1/shops/status?shop=` | — |
+| `syncEntitlement` | `POST /v1/shops/entitlement` | `{ shop, planHandle, creditsIncluded, periodStart?, periodEnd? }` |
+
+Worker: resolve Admin host from `X-Shopify-Shop-Domain` (already in the task payload). Unregistered shop → HTTP 200 skip. Registered with `autoEnabled` false → HTTP 200 skip. Honor `imagesScope` (`all` \| `featured`) and hex `fillMode`/`fillHex` via rembg `bg_color`. Product tag `bg_skip` skips the whole product (Layer 4).
 
 ---
 
@@ -243,20 +263,21 @@ def retry_with_exponential_backoff(
 To minimize API costs and webhook cascades, processing is **batched per product**:
 
 ```text
-1. Fetch live product media via GraphQL (get_unprocessed_images)
+1. Fetch live product media via GraphQL (get_unprocessed_images: tags + `$app.bg_state`)
 2. For each unprocessed image:
    ├── Download raw image bytes from Shopify CDN
    ├── Send bytes to rembg API
-   └── Upload PNG via stagedUploadsCreate & upload_file_to_staged_target
-3. Execute 3 Batched GraphQL Operations TOTAL for the entire product:
-   ├── productCreateMediaBatch: Attaches all new staged PNGs with alt="bg-removed"
-   ├── productReorderMedia: Moves all new media items to their original position indices
-   └── productUpdateMediaBatch: Appends 'hide' to original media alt text (or deletes them)
+   └── Upload WebP via stagedUploadsCreate & upload_file_to_staged_target
+3. Batched GraphQL for the entire product:
+   ├── productCreateMedia: new staged WebPs with original alt copied verbatim
+   ├── productReorderMedia: move new media to original position indices
+   └── metafieldsSet: `$app.bg_state=result` and `$app.bg_source` (original MediaImage GID)
+       on new media; `$app.bg_state=source` on originals (always kept)
 ```
 
 ### Key Benefits:
-- **Reduces GraphQL API Calls:** Drops calls from $3 \times N$ images down to **3 calls total per product**.
-- **Coalesces Webhooks:** Making 3 rapid GraphQL calls in 1 second causes Shopify to coalesce follow-up webhooks, preventing webhook storms.
+- **Reduces GraphQL API Calls:** Mutations are batched per product (create, reorder, one metafieldsSet).
+- **Coalesces Webhooks:** Rapid GraphQL calls in 1 second cause Shopify to coalesce follow-up webhooks, preventing webhook storms.
 
 ---
 
@@ -265,21 +286,26 @@ To minimize API costs and webhook cascades, processing is **batched per product*
 The production deployment runs on a 100% serverless, zero-standing-cost Google Cloud Platform (GCP) architecture:
 
 ```
-[Shopify Webhook] ──(HTTPS)──> [Receiver Cloud Function v2]
-                                         │
-                                         ├─ Read Secrets ──> [GCP Secret Manager]
-                                         ├─ Deduplicate ───> [GCP Cloud Firestore] (webhook_dedup)
-                                         │
-                                         ▼
-                               [GCP Cloud Tasks Queue]
-                               (Queue: bg-remover-queue, Rate Limit: 5/s)
-                                         │
-                                         ▼ (OIDC Authenticated HTTP POST)
-                               [Worker Cloud Function v2]
-                                         │
-                                         ├─ Acquire Lock ──> [GCP Cloud Firestore] (product_locks)
-                                         ├─ Image Rembg ───> [Rembg Hosted API]
-                                         └─ GraphQL Admin ─> [Shopify CDN & API]
+[Shopify shops] ── HMAC products/create|update ──> [Receiver Cloud Function v2]
+                                                         │
+                                                         ├─ Read Secrets ──> [GCP Secret Manager]
+                                                         ├─ Deduplicate ───> [GCP Cloud Firestore] (webhook_dedup)
+                                                         │
+                                                         ▼
+                                               [GCP Cloud Tasks Queue]
+                                               (Queue: bg-remover-queue, Rate Limit: 5/s)
+                                                         │
+                                                         ▼ (OIDC Authenticated HTTP POST)
+                                               [Worker Cloud Function v2]
+                                                         │
+                                                         ├─ Shop token ────> [GCP Cloud Firestore] (shops)
+                                                         ├─ Acquire Lock ──> [GCP Cloud Firestore] (product_locks)
+                                                         ├─ Image Rembg ───> [Rembg Hosted API]
+                                                         └─ GraphQL Admin ─> [per-shop Shopify API]
+
+[Autopilot BgRemover] ── X-Bg-Control-Secret ──> [bg_remover_control]
+                                              └─ register / setConfig / status / entitlement / unregister
+                                                 writes Firestore `shops`
 ```
 
 ---
@@ -289,15 +315,16 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
 | Function Name | Trigger Type | Runtime | Memory / CPU | Concurrency | Timeout | IAM Roles & Secret Access |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `shopify_webhook_receiver` | HTTP POST | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 80 | 10 seconds | `roles/cloudtasks.enqueuer`, access to `SHOPIFY_WEBHOOK_SECRET` |
-| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, Cloud Tasks runner/queueAdmin, `SHOPIFY_ADMIN_API_ACCESS_TOKEN`, `REMBG_API_KEY`. Admin host must be `*.myshopify.com`; configured `SHOPIFY_STORE_URL` wins over task `shop_domain`. |
-| `rembg_circuit_probe` | HTTP GET/POST (Cloud Scheduler every 5 min, OIDC) | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 1 | 60 seconds | Same runtime SA; `REMBG_API_KEY`. Always `GET` membership-usage for credit gauges. If the queue is **paused** and `credits > 60` (above freemium included) or `prepaidCredits > 0`, one `/rmbg` canary (32×32 PNG, `max_retries=0`) must succeed before resume. Canary failures back off 5/15/30/60 minutes via Firestore `circuit_state/rembg` (fail-open). No canary while the queue is running. **Not** a task on `bg-remover-queue`. |
+| `bg_remover_worker` | HTTP POST | Python 3.11/3.12 | 512 MB / 0.5 vCPU | 10 | 120 seconds | `roles/datastore.user`, Cloud Tasks runner/queueAdmin, `SHOPIFY_ADMIN_API_ACCESS_TOKEN` (local fallback), `REMBG_API_KEY`. Admin host from task `shop_domain` (`*.myshopify.com`); token from Firestore `shops` (else local fallback matching that host). |
+| `rembg_circuit_probe` | HTTP GET/POST (Cloud Scheduler every 5 min, OIDC) | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 1 | 60 seconds | Same runtime SA; `REMBG_API_KEY`. Always `GET` membership-usage for credit gauges. If the queue is **paused** and `credits > 0` or `prepaidCredits > 0`, one `/rmbg` canary (32×32 PNG, `max_retries=0`) must succeed before resume. Canary failures back off 5/15/30/60 minutes via Firestore `circuit_state/rembg` (fail-open). No canary while the queue is running. **Not** a task on `bg-remover-queue`. |
+| `bg_remover_control` | HTTP POST/PUT/GET | Python 3.11/3.12 | 256 MB / 0.17 vCPU | 80 | 10 seconds | `roles/datastore.user`, `GCP_CONTROL_SECRET`. Public HTTPS; auth header `X-Bg-Control-Secret`. Paths: `POST /v1/shops/register`, `POST /v1/shops/unregister`, `PUT /v1/shops/config`, `GET /v1/shops/status`, `POST /v1/shops/entitlement`. |
 
 ---
 
 ### B. GCP Cloud Tasks Queue (`bg-remover-queue`)
 
 - **Purpose:** Acts as a rate-limiting buffer, retry scheduler, and deduplication layer between incoming webhooks and background removal workers.
-- **Deduplication Strategy:** Named Tasks `task-product-{clean_pid}-{pid_hash}-{update_hash}`. Uniqueness coalesces the same `updated_at` (retries / webhook storms). A new Shopify `updated_at` creates a new task name so Cloud Tasks' ~1 hour tombstone does not skip later product edits. Layers 3–4 still no-op cascade webhooks from our own media writes.
+- **Deduplication Strategy:** Named Tasks `task-product-{shop_hash}-{clean_pid}-{pid_hash}-{update_hash}`. Uniqueness coalesces the same shop + `updated_at` (retries / webhook storms). A new Shopify `updated_at` creates a new task name so Cloud Tasks' ~1 hour tombstone does not skip later product edits. Layers 3–4 still no-op cascade webhooks from our own media writes.
 - **Queue Configuration Specification:**
   ```yaml
   name: projects/{PROJECT_ID}/locations/us-central1/queues/bg-remover-queue
@@ -312,7 +339,7 @@ The production deployment runs on a 100% serverless, zero-standing-cost Google C
     maxDoublings: 3
   ```
   `maxAttempts: -1` is unlimited. Rembg down or out of credits must **not** drop product work: the worker pauses the queue and returns HTTP **503**; tasks sit until resume and retry until rembg succeeds. The probe will not resume a paused queue until a `/rmbg` canary succeeds (membership-usage credits alone are not enough). Unlimited attempts are the safety net if `/rmbg` flaps after resume. Shopify HTTP **503** uses the same queue and also retries until success. HTTP **400** (poison) still acks and drops.
-- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 or credit-exhaustion 429 (immediately) or 5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. Short-term rembg 429 does **not** pause; the worker honors `Retry-After` in-process then returns **HTTP 503** so Cloud Tasks retries that task. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) **always** calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` (the account API; not `/rmbg`) so the credits dashboard updates every tick. It writes `custom.googleapis.com/bg_remover/rembg_credits` and `.../rembg_prepaid_credits` whenever the JSON includes those fields (including zeros or a non-200 body that still reports balances; fail-open). If the queue is paused and `credits > 60` (above rembg freemium included) or `prepaidCredits > 0`, it then runs one `/rmbg` canary (32×32 PNG, no in-process retry) and `resume_queue` only when that succeeds. Consecutive canary failures set `next_canary_at` 5/15/30/60 minutes out on Firestore `circuit_state/rembg` (fail-open). Freemium-only or empty credits (`credits ≤ 60` and no prepaid) reset that backoff and skip the canary. No canary while the queue is already running. Pause/resume and the probe write `.../circuit_open` (**1** paused, **0** running) for the dashboard state chart. The worker increments `.../images_processed` after a successful batch. Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused** (one `applog` line via `emit_circuit_log`: WARNING for OPEN/STILL OPEN, INFO for CLOSED). Optional `alert_sms` (E.164) and/or `alert_email`: metric alert on those logs (5-minute buckets). SMS/email on **open** and **close**; the incident **closes ~5 minutes after resume** when STILL OPEN logs stop. No 24-hour nag. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
+- **Rembg circuit (pause, not a Pub/Sub DLQ):** On rembg 401/402/403 or credit-exhaustion 429 (immediately) or 5xx/timeout (after in-process retries), the **worker** calls Cloud Tasks `pause_queue` on `bg-remover-queue` and returns **HTTP 503** so the current task is **not** deleted. Short-term rembg 429 does **not** pause; the worker honors `Retry-After` in-process then returns **HTTP 503** so Cloud Tasks retries that task. The probe never pauses the queue. New webhooks can still enqueue; they sit until resume. `rembg_circuit_probe` (Cloud Scheduler every **5 minutes**, HTTP OIDC, **not** a task on this queue) **always** calls [`GET /api/membership-usage`](https://www.rembg.com/api/docs#tag/account) on `www.rembg.com` (the account API; not `/rmbg`) so the credits dashboard updates every tick. It writes `custom.googleapis.com/bg_remover/rembg_credits` and `.../rembg_prepaid_credits` whenever the JSON includes those fields (including zeros or a non-200 body that still reports balances; fail-open). If the queue is paused and `credits > 0` or `prepaidCredits > 0`, it then runs one `/rmbg` canary (32×32 PNG, no in-process retry) and `resume_queue` only when that succeeds. Consecutive canary failures set `next_canary_at` 5/15/30/60 minutes out on Firestore `circuit_state/rembg` (fail-open). Empty credits (`credits = 0` and `prepaidCredits = 0`) reset that backoff and skip the canary. No canary while the queue is already running. Pause/resume and the probe write `.../circuit_open` (**1** paused, **0** running) for the dashboard state chart. The worker increments `.../images_processed` after a successful batch. Logs `[CIRCUIT OPEN]` on a new worker pause and `[CIRCUIT STILL OPEN]` only if the probe fails **while the queue is already paused** (one `applog` line via `emit_circuit_log`: WARNING for OPEN/STILL OPEN, INFO for CLOSED). Optional `alert_sms` (E.164) and/or `alert_email`: metric alert on those logs (5-minute buckets). SMS/email on **open** and **close**; the incident **closes ~5 minutes after resume** when STILL OPEN logs stop. No 24-hour nag. Poison pills (bad image, product 404) still HTTP 400 and do not pause.
 
 **Out-of-credits fault inject:** set `REMBG_FAULT_INJECT=out_of_credits` at request time in `RembgHostedRemover` (not in Terraform or `deploy_gcp.sh`). `/rmbg` raises `RembgUnavailableError` without calling rembg; membership-usage returns `{credits: 0, prepaidCredits: 0}`. Logs `[FAULT INJECT] rembg out_of_credits`. Toggle both Gen2 Cloud Run services so the probe cannot resume while the worker is faulted. Next `deploy_gcp.sh` `--set-env-vars` replace-all **clears** the flag.
 
@@ -343,12 +370,16 @@ Local: `export REMBG_FAULT_INJECT=out_of_credits`.
      - **Fields:** `key` (original webhook id string), `created_at` (number, unix seconds), `expires_at` (number, unix seconds, set to `now + 300s`).
      - **TTL Policy:** Enabled on `expires_at` field to auto-delete expired webhook records.
   2. **`product_locks` Collection:**
-     - **Document ID:** SHA-256 hex of `lock:product:{product_id}` (product_id is a Shopify GID containing `/`, which is illegal in a raw document name).
+     - **Document ID:** SHA-256 hex of `lock:product:{shop_domain}:{product_id}` (product_id is a Shopify GID containing `/`, which is illegal in a raw document name).
      - **Fields:** `lock_key` (original lock string), `created_at` (number, unix seconds), `expires_at` (number, unix seconds, set to `now + 120s`).
      - **TTL Policy:** Enabled on `expires_at` field for automatic lock auto-release on crashed workers.
-  3. **`circuit_state` Collection:**
+  3. **`shops` Collection:**
+     - **Document ID:** SHA-256 hex of the shop domain (`cool-shoes.myshopify.com`).
+     - **Fields:** `shop`, `accessToken` (offline token; never log), `scope`, `status`, `autoEnabled`, `fillMode`, `fillHex`, `imagesScope`, `forceReprocessDefault`, `planHandle`, `creditsIncluded`, `periodStart`, `periodEnd`, `updatedAt`.
+     - **No TTL.** Written by `bg_remover_control`; read by `bg_remover_worker`.
+  4. **`circuit_state` Collection:**
      - **Document ID:** `rembg`.
-     - **Fields:** `fail_count` (int), `next_canary_at` (unix seconds), `updated_at` (unix seconds). Written fail-open by the probe. After a failed `/rmbg` canary, `next_canary_at` is now plus 5/15/30/60 minutes by consecutive `fail_count`. Success or a probe with `credits ≤ 60` and no prepaid resets both fields.
+     - **Fields:** `fail_count` (int), `next_canary_at` (unix seconds), `updated_at` (unix seconds). Written fail-open by the probe. After a failed `/rmbg` canary, `next_canary_at` is now plus 5/15/30/60 minutes by consecutive `fail_count`. Success or a probe with `credits = 0` and `prepaidCredits = 0` resets both fields.
 
 ---
 
@@ -359,6 +390,7 @@ Local: `export REMBG_FAULT_INJECT=out_of_credits`.
   - `SHOPIFY_CLIENT_SECRET`
   - `SHOPIFY_ADMIN_API_ACCESS_TOKEN`
   - `REMBG_API_KEY`
+  - `GCP_CONTROL_SECRET`
 - **Secret Access:** Mounted directly into Cloud Functions environment variables at container startup (`secretKeyRef`). `get_webhook_secret()` and the worker settings loader **prefer environment variables** over `config.py`, so production Secret Manager values are never shadowed by a local or third-party `config` module. Secrets are stripped of surrounding whitespace (common Secret Manager paste issue).
 - **OIDC Service Account Authentication:** Cloud Tasks uses an OIDC ID token generated by a dedicated Service Account (`bg-remover-sa@...iam.gserviceaccount.com`) to authenticate HTTP POST invocations to `bg_remover_worker`. The worker endpoint enforces `roles/run.invoker`.
 
@@ -373,6 +405,8 @@ Local: `export REMBG_FAULT_INJECT=out_of_credits`.
 | **Task Queue** | `LocalTaskDispatcher` (Daemon Thread) | `GCPCloudTasksDispatcher` (Cloud Tasks Queue) |
 | **Deduplication Store** | `InMemoryDedupStore` | `GCPFirestoreDedupStore` (`webhook_dedup` coll) |
 | **Product Lock Store** | `InMemoryLockStore` | `GCPFirestoreLockStore` (`product_locks` coll) |
+| **Shop registry** | `InMemoryShopStore` | `GCPFirestoreShopStore` (`shops` coll) |
+| **Control plane** | `run_local_control.py` port 8081 | `bg_remover_control` Cloud Function |
 | **Secrets & Config** | `config.py` / `.env` | GCP Secret Manager / Environment Vars |
 
 ---
@@ -387,6 +421,8 @@ shopify-tools/
     ├── ARCHITECTURE.md                  # System architecture & design specification
     ├── process_product.py               # CLI tool & process_product_batch execution core
     ├── main.py                          # CLI runner + Cloud Functions --entry-point exports
+    ├── run_local_server.py              # functions-framework receiver on port 8080
+    ├── run_local_control.py             # functions-framework control-plane on port 8081
     ├── requirements.txt                 # Project dependencies
     ├── src/
     │   ├── utils/
@@ -398,11 +434,14 @@ shopify-tools/
     │   ├── shopify/
     │   │   ├── client.py                # ShopifyGraphQLClient (queries, mutations, batching)
     │   │   ├── store_host.py            # Allowlist *.myshopify.com Admin host
-    │   │   └── alt_helpers.py           # Alt text parsing & tag manipulation helpers
+    │   │   └── metafields.py            # `$app.bg_state`, `$app.bg_source`, `bg_skip`
+    │   ├── control/
+    │   │   └── api.py                   # bg_remover_control (register / setConfig / status)
     │   ├── queue/
-    │   │   ├── base.py                  # BaseTaskDispatcher, BaseLockStore, BaseDedupStore
-    │   │   ├── memory_stores.py         # InMemoryLockStore & InMemoryDedupStore
-    │   │   ├── firestore_stores.py      # GCPFirestoreLockStore & GCPFirestoreDedupStore
+    │   │   ├── base.py                  # BaseTaskDispatcher, BaseLockStore, BaseDedupStore, BaseShopStore
+    │   │   ├── memory_stores.py         # InMemory lock, dedup, and shop stores
+    │   │   ├── firestore_stores.py      # Firestore lock, dedup, and shop stores
+    │   │   ├── shop_registry.py         # get_shop_store()
     │   │   ├── local_dispatcher.py      # LocalTaskDispatcher (thread-based)
     │   │   ├── gcp_dispatcher.py        # GCPCloudTasksDispatcher (Cloud Tasks Named Tasks)
     │   │   ├── queue_control.py         # Pause/resume bg-remover-queue (rembg circuit)
@@ -413,7 +452,9 @@ shopify-tools/
     │       ├── hmac_verifier.py         # verify_shopify_hmac() signature verifier
     │       └── receiver.py              # shopify_webhook_receiver HTTP Cloud Function
     └── tests/
-        ├── test_alt_helpers.py          # Alt tag parsing unit tests
+        ├── test_metafields.py           # `$app.bg_state` / `$app.bg_source` / `bg_skip`
+        ├── test_process_product.py      # Alt copy, keep originals, metafieldsSet pairing
+        ├── test_control_api.py          # bg_remover_control auth and shop registry
         ├── test_removers.py             # Rembg API client unit tests
         ├── test_shopify.py              # Shopify GraphQL client unit tests
         ├── test_webhooks.py             # Webhook receiver, HMAC, env-first secret loading

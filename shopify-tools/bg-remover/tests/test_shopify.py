@@ -53,6 +53,144 @@ def test_get_unprocessed_images_success(mocker):
     assert image_info["media_id"] == "gid://shopify/MediaImage/67890"
     assert image_info["url"] == "https://cdn.shopify.com/s/files/1/test.jpg"
     assert image_info["product_title"] == "Test Sneakers"
+    assert image_info["alt_text"] == "Test Image"
+    assert image_info["bg_state"] == ""
+
+
+def _product_media_payload(nodes, tags=None):
+    return {
+        "data": {
+            "product": {
+                "id": "gid://shopify/Product/12345",
+                "title": "Test Sneakers",
+                "tags": tags or [],
+                "media": {"nodes": nodes},
+            }
+        }
+    }
+
+
+def test_get_unprocessed_images_skips_bg_state_source_and_result(mocker):
+    mock_data = _product_media_payload(
+        [
+            {
+                "id": "gid://shopify/MediaImage/1",
+                "mediaContentType": "IMAGE",
+                "alt": "Air Jordan 4",
+                "bgState": {"value": "source"},
+                "image": {
+                    "id": "gid://shopify/Image/1",
+                    "url": "https://cdn.shopify.com/s/files/1/orig.jpg",
+                    "altText": "Air Jordan 4",
+                    "width": 1000,
+                },
+            },
+            {
+                "id": "gid://shopify/MediaImage/2",
+                "mediaContentType": "IMAGE",
+                "alt": "Air Jordan 4",
+                "bgState": {"value": "result"},
+                "image": {
+                    "id": "gid://shopify/Image/2",
+                    "url": "https://cdn.shopify.com/s/files/1/out.webp",
+                    "altText": "Air Jordan 4",
+                    "width": 1000,
+                },
+            },
+            {
+                "id": "gid://shopify/MediaImage/3",
+                "mediaContentType": "IMAGE",
+                "alt": "Side view",
+                "bgState": None,
+                "image": {
+                    "id": "gid://shopify/Image/3",
+                    "url": "https://cdn.shopify.com/s/files/1/side.jpg",
+                    "altText": "Side view",
+                    "width": 800,
+                },
+            },
+        ]
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_data
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    client = ShopifyGraphQLClient(
+        store_url="test-store.myshopify.com", access_token="shpat_test"
+    )
+    images = client.get_unprocessed_images("12345")
+    assert len(images) == 1
+    assert images[0]["media_id"] == "gid://shopify/MediaImage/3"
+    assert images[0]["alt_text"] == "Side view"
+
+
+def test_get_unprocessed_images_skips_product_with_bg_skip(mocker):
+    mock_data = _product_media_payload(
+        [
+            {
+                "id": "gid://shopify/MediaImage/1",
+                "mediaContentType": "IMAGE",
+                "alt": "Air Jordan 4",
+                "image": {
+                    "id": "gid://shopify/Image/1",
+                    "url": "https://cdn.shopify.com/s/files/1/orig.jpg",
+                    "altText": "Air Jordan 4",
+                    "width": 1000,
+                },
+            }
+        ],
+        tags=["bg_skip", "summer"],
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_data
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    client = ShopifyGraphQLClient(
+        store_url="test-store.myshopify.com", access_token="shpat_test"
+    )
+    assert client.get_unprocessed_images("12345") == []
+
+
+def test_get_unprocessed_images_featured_scope(mocker):
+    mock_data = _product_media_payload(
+        [
+            {
+                "id": "gid://shopify/MediaImage/1",
+                "mediaContentType": "IMAGE",
+                "alt": "First",
+                "image": {
+                    "id": "gid://shopify/Image/1",
+                    "url": "https://cdn.shopify.com/s/files/1/a.jpg",
+                    "altText": "First",
+                    "width": 100,
+                },
+            },
+            {
+                "id": "gid://shopify/MediaImage/2",
+                "mediaContentType": "IMAGE",
+                "alt": "Second",
+                "image": {
+                    "id": "gid://shopify/Image/2",
+                    "url": "https://cdn.shopify.com/s/files/1/b.jpg",
+                    "altText": "Second",
+                    "width": 100,
+                },
+            },
+        ]
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_data
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    client = ShopifyGraphQLClient(
+        store_url="test-store.myshopify.com", access_token="shpat_test"
+    )
+    images = client.get_unprocessed_images("12345", images_scope="featured")
+    assert len(images) == 1
+    assert images[0]["media_id"] == "gid://shopify/MediaImage/1"
 
 
 def test_get_unprocessed_images_not_found(mocker):

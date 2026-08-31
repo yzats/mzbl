@@ -77,3 +77,27 @@ class BaseDedupStore(ABC):
             return True
         self.remember(key, ttl_seconds=ttl_seconds)
         return False
+
+
+def product_lock_key(shop_domain: str, product_id: str) -> str:
+    """Lock id scoped by shop because product GIDs are not globally unique."""
+    return f"lock:product:{shop_domain}:{product_id}"
+
+
+class BaseShopStore(ABC):
+    """Per-shop credentials and Autopilot BgRemover config (register / setConfig)."""
+
+    @abstractmethod
+    def get_shop(self, shop: str) -> Optional[Dict[str, Any]]:
+        """Return the shop record dict, or None if unregistered."""
+        pass
+
+    @abstractmethod
+    def upsert_shop(self, shop: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Create or merge fields for shop. Returns the stored record (never log accessToken)."""
+        pass
+
+    @abstractmethod
+    def delete_shop(self, shop: str) -> None:
+        """Remove the shop record (unregister)."""
+        pass

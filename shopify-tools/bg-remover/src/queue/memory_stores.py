@@ -1,6 +1,6 @@
 import time
-from typing import Dict
-from .base import BaseLockStore, BaseDedupStore
+from typing import Dict, Any, Optional
+from .base import BaseLockStore, BaseDedupStore, BaseShopStore
 
 
 class InMemoryLockStore(BaseLockStore):
@@ -46,3 +46,28 @@ class InMemoryDedupStore(BaseDedupStore):
         if not key:
             return
         self._items[key] = time.time() + ttl_seconds
+
+
+class InMemoryShopStore(BaseShopStore):
+    """In-memory shop registry for local tests and functions-framework."""
+
+    def __init__(self):
+        self._shops: Dict[str, Dict[str, Any]] = {}
+
+    def get_shop(self, shop: str) -> Optional[Dict[str, Any]]:
+        key = (shop or "").strip().lower()
+        if not key:
+            return None
+        record = self._shops.get(key)
+        return dict(record) if record else None
+
+    def upsert_shop(self, shop: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        key = (shop or "").strip().lower()
+        current = self._shops.get(key, {"shop": key})
+        merged = {**current, **fields, "shop": key, "updatedAt": time.time()}
+        self._shops[key] = merged
+        return dict(merged)
+
+    def delete_shop(self, shop: str) -> None:
+        key = (shop or "").strip().lower()
+        self._shops.pop(key, None)

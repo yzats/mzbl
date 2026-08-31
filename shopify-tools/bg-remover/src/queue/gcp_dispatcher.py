@@ -7,24 +7,28 @@ from src.utils import applog
 from .base import BaseTaskDispatcher, DispatchResult
 
 
-def named_task_id(product_id: str, metadata: Optional[Dict[str, Any]] = None) -> str:
-    """Build a Cloud Tasks-safe name that coalesces one product *update*, not one product forever.
+def named_task_id(
+    product_id: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    shop_domain: str = "",
+) -> str:
+    """Build a Cloud Tasks-safe name that coalesces one shop+product *update*.
 
     Cloud Tasks keeps completed/deleted task names as tombstones for up to ~1 hour.
-    A name of only ``task-product-{id}`` therefore blocks legitimate later edits.
-    Including a hash of Shopify ``updated_at`` (else webhook id / 30s bucket) lets a
-    new product revision enqueue immediately while still dropping in-flight duplicates
-    of the same update.
+    Including a shop hash plus a hash of Shopify ``updated_at`` (else webhook id /
+    30s bucket) lets a new product revision enqueue immediately while still dropping
+    in-flight duplicates of the same update. Product IDs are per-shop, not global.
     """
     metadata = metadata or {}
     raw_pid = product_id.split("/")[-1]
     clean_pid = "".join(ch for ch in raw_pid if ch.isalnum() or ch in "-_") or "unknown"
     pid_hash = hashlib.sha256(product_id.encode("utf-8")).hexdigest()[:12]
+    shop_hash = hashlib.sha256((shop_domain or "").encode("utf-8")).hexdigest()[:8]
     event_token = str(metadata.get("updated_at") or metadata.get("webhook_id") or "")
     if not event_token:
         event_token = str(int(time.time() // 30))
     event_hash = hashlib.sha256(event_token.encode("utf-8")).hexdigest()[:12]
-    return f"task-product-{clean_pid}-{pid_hash}-{event_hash}"
+    return f"task-product-{shop_hash}-{clean_pid}-{pid_hash}-{event_hash}"
 
 
 class GCPCloudTasksDispatcher(BaseTaskDispatcher):
@@ -78,7 +82,7 @@ class GCPCloudTasksDispatcher(BaseTaskDispatcher):
         }
 
         # Coalesce duplicate deliveries of the same product update; do not tombstone the product for 1 hour.
-        task_id = named_task_id(product_id, metadata)
+        task_id = named_task_id(product_id, metadata, shop_domain=shop_domain)
         task_name = f"{self.queue_path}/tasks/{task_id}"
 
         if not self.client:
