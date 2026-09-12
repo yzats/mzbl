@@ -181,8 +181,9 @@ function parseSupplierDetails(supplier, selectedOptions) {
 }
 
 function parseCompositeShoeDetails(supplier, selectedOptions) {
-  // KCP currently stores multiple facts in one option value:
-  // "12.5M/14W - Brand New - No Box"
+  // KCP may send composite options ("12.5M/14W - Brand New - No Box") or
+  // size-only values ("12.5M / 14W", "10.5"). Size is always the first
+  // dash-separated segment.
   var sizeOption = findOption(selectedOptions, supplier.sizeOptionNames || ['Size']);
   if (!sizeOption) return blankDetails();
 
@@ -201,37 +202,51 @@ function parseCompositeShoeDetails(supplier, selectedOptions) {
 }
 
 function parseUsSizeText(sizeText) {
+  // Require the whole token to match a known adult size pattern so values
+  // like "Y / 1.5W" or "3.5Y / 5W" are not partially matched as women's.
   var text = (sizeText || '').trim();
 
+  // Drop trailing notes sometimes glued onto size-only options,
+  // e.g. "12M / 13.5W (Missing Lid)".
+  text = text.replace(/\s*\([^)]*\)\s*$/, '').trim();
+
   // European size conversion (e.g., "EU44", "EU 44", "EU44.5")
-  var euMatch = text.match(/^(?:EU\s*)?([0-9]+(?:\.[0-9]+)?)$/i) || text.match(/^EU\s*([0-9]+(?:\.[0-9]+)?)$/i);
+  var euMatch = text.match(/^EU\s*([0-9]+(?:\.[0-9]+)?)$/i);
   if (euMatch) {
     var euVal = parseFloat(euMatch[1]);
     if (!isNaN(euVal)) {
-      var mVal = (euVal - 33).toString();
-      var wVal = (euVal - 31).toString();
-      return { m: mVal, w: wVal };
+      return { m: (euVal - 33).toString(), w: (euVal - 31).toString() };
     }
   }
 
-  // Men's and women's sizes in the common "12.5M/14W" order.
-  var match = text.match(/([0-9]+(?:\.[0-9]+)?)\s*M(?:en'?s)?\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*W/i);
+  // Men's and women's sizes in the common "12.5M/14W" order (spaces optional).
+  var match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*M(?:en'?s)?\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*W$/i);
   if (match) return { m: match[1], w: match[2] };
 
   // Same data in reverse order, e.g. "14W/12.5M".
-  match = text.match(/([0-9]+(?:\.[0-9]+)?)\s*W(?:omen'?s)?\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*M/i);
+  match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*W(?:omen'?s)?\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*M$/i);
   if (match) return { m: match[2], w: match[1] };
 
-  // Men's-only size.
-  match = text.match(/(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*M(?:en'?s)?/i);
-  if (match) return { m: match[1], w: '' };
+  // Men's-only size. Derive women's as men's + 1.5 (standard US pairing).
+  match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*M(?:en'?s)?$/i);
+  if (match) return { m: match[1], w: offsetUsSize(match[1], 1.5) };
 
-  // Women's-only size.
-  match = text.match(/(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*W(?:omen'?s)?/i);
-  if (match) return { m: '', w: match[1] };
+  // Women's-only size. Derive men's as women's - 1.5.
+  match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*W(?:omen'?s)?$/i);
+  if (match) return { m: offsetUsSize(match[1], -1.5), w: match[1] };
+
+  // Bare number (common on pre-owned single-SKU rows) — treat as men's.
+  match = text.match(/^([0-9]+(?:\.[0-9]+)?)$/);
+  if (match) return { m: match[1], w: offsetUsSize(match[1], 1.5) };
 
   // Unknown size format. The caller turns this into an import error.
   return { m: '', w: '' };
+}
+
+function offsetUsSize(sizeText, delta) {
+  // US shoe sizes step in halves; round to nearest 0.5 to avoid float noise.
+  var value = Math.round((parseFloat(sizeText) + delta) * 2) / 2;
+  return value.toString();
 }
 
 function normalizeCategory(category, productType) {

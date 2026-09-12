@@ -111,11 +111,16 @@ describe('Shopify Importer Unit Tests', () => {
     const validSizes = [
       { input: '12.5M/14W - Brand New - No Box', m: '12.5', w: '14' },
       { input: '14W/12.5M - Pre-Owned - No Box', m: '12.5', w: '14' },
-      { input: '10.5M - Brand New - With Box', m: '10.5', w: '' },
-      { input: '8.5W - Pre-Owned - No Box', m: '', w: '8.5' },
+      { input: '10.5M - Brand New - With Box', m: '10.5', w: '12' },
+      { input: '8.5W - Pre-Owned - No Box', m: '7', w: '8.5' },
       { input: 'US 10M / 11.5W - Brand New - No Box', m: '10', w: '11.5' },
       { input: 'EU44 - Brand New', m: '11', w: '13' },
-      { input: 'EU 45 - Brand New', m: '12', w: '14' }
+      { input: 'EU 45 - Brand New', m: '12', w: '14' },
+      // Size-only options from newer KCP exports
+      { input: '10.5M / 12W', m: '10.5', w: '12' },
+      { input: '10.5', m: '10.5', w: '12' },
+      { input: '11.5W', m: '10', w: '11.5' },
+      { input: '12M / 13.5W (Missing Lid)', m: '12', w: '13.5' }
     ];
 
     it('successfully parses valid US Men\'s and Women\'s size patterns and EU sizes', () => {
@@ -130,6 +135,8 @@ describe('Shopify Importer Unit Tests', () => {
       const invalidSizeInputs = [
         { name: 'Size', value: '7Y - Pre-Owned' },               // Youth
         { name: 'Size', value: '9C - Brand New' },               // Child
+        { name: 'Size', value: 'Y / 1.5W' },                     // Broken Restock template
+        { name: 'Size', value: '3.5Y / 5W' },                    // Youth + W pair
         { name: 'Size', value: '10-5-m-11-5-w' },                // Hyphenated slug
         { name: 'Size', value: 'copyt:temporary:size' },         // Temporary slug
         { name: 'Title', value: 'Default Title' }                // Unmapped option name
