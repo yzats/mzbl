@@ -127,7 +127,9 @@ function processInventory() {
           title: '',
           description: '',
           category: '',
-          productType: ''
+          productType: '',
+          tags: '',
+          conditionMetafield: ''
         };
       }
       if (getVal('Vendor')) productMap[handle].vendor = getVal('Vendor');
@@ -135,6 +137,10 @@ function processInventory() {
       if (getVal('Body (HTML)')) productMap[handle].description = getVal('Body (HTML)');
       if (getVal('Product Category')) productMap[handle].category = getVal('Product Category');
       if (getVal('Type')) productMap[handle].productType = getVal('Type');
+      if (getVal('Tags')) productMap[handle].tags = getVal('Tags');
+      if (getVal('Condition (product.metafields.custom.productcondition)')) {
+        productMap[handle].conditionMetafield = getVal('Condition (product.metafields.custom.productcondition)');
+      }
     }
 
     const parent = (handle && productMap[handle]) ? productMap[handle] : {
@@ -142,7 +148,9 @@ function processInventory() {
       title: getVal('Title'),
       description: getVal('Body (HTML)'),
       category: getVal('Product Category'),
-      productType: getVal('Type')
+      productType: getVal('Type'),
+      tags: getVal('Tags'),
+      conditionMetafield: getVal('Condition (product.metafields.custom.productcondition)')
     };
 
     const selectedOptions = [];
@@ -164,7 +172,9 @@ function processInventory() {
           title: parent.title,
           description: parent.description,
           category: parent.category ? { name: parent.category } : null,
-          productType: parent.productType
+          productType: parent.productType,
+          tags: parent.tags || '',
+          conditionMetafield: parent.conditionMetafield || ''
         }
       }
     };
