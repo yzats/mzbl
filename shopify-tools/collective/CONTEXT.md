@@ -29,4 +29,7 @@ This repository processes Shopify inventory exports for **Kicks Collective PA** 
 ### Environment Requirement
 - **Node.js**: `v18+` (tested with Node `v26.7.0` on macOS arm64). Path: `/opt/homebrew/bin/node` or standard `PATH`.
 
+### CI
+- GitHub Actions: [`.github/workflows/collective-unit-tests.yml`](../../.github/workflows/collective-unit-tests.yml) runs `node --test importer.test.mjs` on pushes and pull requests to `main` when `shopify-tools/collective/**` (or this workflow file) changes.
+
 1. **Process Inventory CSV**:

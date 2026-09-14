@@ -1,0 +1,33 @@
+name: Collective unit tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shopify-tools/collective/**'
+      - '.github/workflows/collective-unit-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'shopify-tools/collective/**'
+      - '.github/workflows/collective-unit-tests.yml'
+
+jobs:
+  test:
+    name: shopify-tools/collective
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shopify-tools/collective
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run unit tests
+        run: node --test importer.test.mjs
