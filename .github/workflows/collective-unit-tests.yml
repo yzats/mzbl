@@ -1,4 +1,4 @@
-name: Collective unit tests
+name: shopify collective unit tests
 
 on:
   push:
