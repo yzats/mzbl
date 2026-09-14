@@ -1,51 +1,138 @@
-var CATEGORY_GIDS = {
-  Sneakers: 'gid://shopify/TaxonomyCategory/aa-sneakers'
+/**
+ * Collective inventory normalizer for Shopify Flow (Run Code) and the local
+ * CSV runner (process_inventory.mjs).
+ *
+ * Takes one productVariant (+ product) from a configured supplier and maps
+ * supplier-specific encodings into stable fields for downstream metafield
+ * updates and review tags.
+ *
+ * Shared across suppliers (see SHARED_NORMALIZATION.md):
+ *   - CONDITION_MAP / BOX_MAP and text→normalized mappers
+ *   - size parse / US·EU conversion / M↔W consistency
+ *   - category → Sneakers, title-case, sneaker condition/box description
+ *
+ * Supplier-specific (see KCP_NORMALIZATION_RULES.md for KCP):
+ *   - how size / condition / box are segmented from options
+ *   - which fields to cascade when a segment is missing
+ *
+ * Size is required: if US M/W size cannot be derived, condition and box are
+ * left unset. Unresolved values stay empty (never the string "unknown");
+ * problems are reported via importErrors instead.
+ *
+ * Outputs — derived:
+ *   prefix                  e.g. "KCP"
+ *   variantId               e.g. "4521987654321"
+ *   newSku                  e.g. "KCP-4521987654321"
+ *   normalizedMSize         e.g. "10.5", "12"  (empty if size failed)
+ *   normalizedWSize         e.g. "12", "13.5"  (empty if size failed)
+ *   normalizedCondition     NORMALIZED_CONDITION.BRAND_NEW | NORMALIZED_CONDITION.WORN | ""
+ *   normalizedBox           NORMALIZED_BOX.WITH_BOX | NORMALIZED_BOX.DAMAGED_BOX | NORMALIZED_BOX.REPLACEMENT_BOX |
+ *                           NORMALIZED_BOX.NO_BOX | NORMALIZED_BOX.WITH_BOX_MISSING_LID | ""
+ *   normalizedTitle         title-cased product title
+ *   normalizedDescription   e.g. "Worn (No Box)", "Brand New",
+ *                           "Replacement Box", or ""
+ *   normalizedCategory      NORMALIZED_CATEGORY.SNEAKERS | ""
+ *   normalizedCategoryGid   e.g. "gid://shopify/TaxonomyCategory/aa-sneakers"
+ *                           or ""
+ *   importErrors            comma-separated codes, e.g. "unknown-size" or
+ *                           "child-size,unknown-category" ("" if none)
+ *   hasImportErrors         true | false
+ *
+ * Outputs — original (copied):
+ *   originalSku             supplier variant SKU as-is
+ *   originalTitle           product title as-is
+ *   originalDescription     product description / Body HTML as-is
+ *
+ * importErrors may include: unknown-supplier, child-size, unknown-size,
+ * inconsistent-size, unknown-condition, unknown-box, unknown-category.
+ */
+
+// ---------------------------------------------------------------------------
+// Shared maps & taxonomy
+// ---------------------------------------------------------------------------
+
+// Canonical normalized field values (outputs / map targets).
+var NORMALIZED_CONDITION = {
+  BRAND_NEW: 'Brand New',
+  WORN: 'Worn'
 };
+
+var NORMALIZED_BOX = {
+  WITH_BOX: 'With Box',
+  DAMAGED_BOX: 'Damaged Box',
+  REPLACEMENT_BOX: 'Replacement Box',
+  NO_BOX: 'No Box',
+  WITH_BOX_MISSING_LID: 'With Box - Missing Lid'
+};
+
+var NORMALIZED_CATEGORY = {
+  SNEAKERS: 'Sneakers'
+};
+
+var CATEGORY_GIDS = {};
+CATEGORY_GIDS[NORMALIZED_CATEGORY.SNEAKERS] = 'gid://shopify/TaxonomyCategory/aa-sneakers';
+
+// Keys are normalized to lowercase before lookup.
+var CONDITION_MAP = {
+  'brand new': NORMALIZED_CONDITION.BRAND_NEW,
+  'new': NORMALIZED_CONDITION.BRAND_NEW,
+  'pre-owned': NORMALIZED_CONDITION.WORN,
+  'worn': NORMALIZED_CONDITION.WORN,
+  'used': NORMALIZED_CONDITION.WORN,
+  'tried on': NORMALIZED_CONDITION.WORN,
+  'vnds': NORMALIZED_CONDITION.WORN,
+  'lightly worn': NORMALIZED_CONDITION.WORN,
+  'moderately worn': NORMALIZED_CONDITION.WORN,
+  'heavily worn': NORMALIZED_CONDITION.WORN
+};
+
+// Keys are normalized to lowercase before lookup.
+var BOX_MAP = {
+  'original box (good)': NORMALIZED_BOX.WITH_BOX,
+  'original box (damaged)': NORMALIZED_BOX.DAMAGED_BOX,
+  'damaged box': NORMALIZED_BOX.DAMAGED_BOX,
+  'replacement box': NORMALIZED_BOX.REPLACEMENT_BOX,
+  'no box': NORMALIZED_BOX.NO_BOX,
+  'no_box': NORMALIZED_BOX.NO_BOX,
+  'special-no_box': NORMALIZED_BOX.NO_BOX,
+  'missing lid': NORMALIZED_BOX.WITH_BOX_MISSING_LID
+};
+
+// Product type → normalized category (keys lowercase).
+var PRODUCT_TYPE_MAP = {
+  "men's shoes": NORMALIZED_CATEGORY.SNEAKERS,
+  "women's shoes": NORMALIZED_CATEGORY.SNEAKERS,
+  "kid's shoes": NORMALIZED_CATEGORY.SNEAKERS,
+  "kids's shoes": NORMALIZED_CATEGORY.SNEAKERS,
+  "toddler's": NORMALIZED_CATEGORY.SNEAKERS,
+  'toddlers': NORMALIZED_CATEGORY.SNEAKERS,
+  'preschool': NORMALIZED_CATEGORY.SNEAKERS,
+  'shoes': NORMALIZED_CATEGORY.SNEAKERS,
+  'sneakers': NORMALIZED_CATEGORY.SNEAKERS,
+  'pre-owned sneakers': NORMALIZED_CATEGORY.SNEAKERS
+};
+
+// Shopify taxonomy / category name tokens → normalized category (keys lowercase).
+// Matched exactly or as a substring of the category path
+// (e.g. "Apparel & Accessories > Shoes > Sneakers").
+var CATEGORY_MAP = {
+  'shoes': NORMALIZED_CATEGORY.SNEAKERS,
+  'sneakers': NORMALIZED_CATEGORY.SNEAKERS
+};
+
+// ---------------------------------------------------------------------------
+// Supplier configs — encoding / cascade strategy only (not shared maps)
+// ---------------------------------------------------------------------------
 
 // Add future suppliers here. If a supplier encodes size/condition/box
 // differently, give it a different parser name and add that parser below.
 var SUPPLIERS = {
   'Kicks Collective PA': {
-    // Prefix added to Shopify's variant SKU.
     prefix: 'KCP',
-
-    // Chooses which parser function handles this supplier's option format.
-    parser: 'composite-shoe',
-
-    // KCP title wording is usable as-is; normalize capitalization only.
+    parser: 'kcp-size-option',
     titleFormatter: 'title-case',
-
-    // Description is generated from normalized data, not supplier prose.
-    descriptionFormatter: 'condition-box',
-
-    // Option names to search when looking for supplier size/details.
-    sizeOptionNames: ['Size', 'Shoe size', ''],
-
-    // Keys are normalized to lowercase before lookup.
-    conditionMap: {
-      'brand new': 'Brand New',
-      'new': 'Brand New',
-      'pre-owned': 'Worn',
-      'worn': 'Worn',
-      'used': 'Worn',
-      'tried on': 'Worn',
-      'vnds': 'Worn',
-      'lightly worn': 'Worn',
-      'moderately worn': 'Worn',
-      'heavily worn': 'Worn'
-    },
-
-    // Keys are normalized to lowercase before lookup.
-    boxMap: {
-      'original box (good)': 'With Box',
-      'original box (damaged)': 'Damaged Box',
-      'damaged box': 'Damaged Box',
-      'replacement box': 'Replacement Box',
-      'no box': 'No Box',
-      'no_box': 'No Box',
-      'special-no_box': 'No Box',
-      'missing lid': 'With Box - Missing Lid'
-    }
+    // Option names to search when looking for the Size option.
+    sizeOptionNames: ['Size', 'Shoe size', '']
   }
 };
 
@@ -59,14 +146,14 @@ export default function main(input) {
 
   // Extract the numeric variant ID from the full GID (e.g., gid://shopify/ProductVariant/4521987654321)
   var variantId = productVariant.id ? productVariant.id.toString().split('/').pop() : '';
-  
+
   // Get the supplier code from the SUPPLIERS lookup
   var supplierCode = supplier ? supplier.prefix : 'UNK';
-  
+
   // Build the new SKU in format {SUPPLIER_CODE}-{variantId}
   // e.g., KCP-4521987654321
   var newSku = supplierCode + '-' + variantId;
-  
+
   // Capture the supplier's original SKU as-is for reference
   var originalSku = productVariant.sku || '';
 
@@ -83,9 +170,10 @@ export default function main(input) {
   var originalTitle = product.title || '';
   var originalDescription = product.description || '';
   var normalizedTitle = normalizeTitle(product.title || '', supplier);
-  var normalizedDescription = normalizeDescription(parsedDetails, supplier);
   var normalizedCategory = normalizeCategory(product.category, product.productType);
   var normalizedCategoryGid = CATEGORY_GIDS[normalizedCategory] || '';
+  // Description format is shared and product-type based (not supplier-based).
+  var normalizedDescription = normalizeDescription(parsedDetails, normalizedCategory);
 
   // A comma-separated error string is easier to pass through Shopify Flow than
   // an array, while hasImportErrors remains convenient for conditions.
@@ -112,20 +200,22 @@ export default function main(input) {
   };
 }
 
-function normalizeDescription(details, supplier) {
-  if (!supplier) return '';
+// ---------------------------------------------------------------------------
+// Shared: title / description
+// ---------------------------------------------------------------------------
 
-  // Add future description strategies here when suppliers need a different
-  // product description format.
-  if (supplier.descriptionFormatter === 'condition-box') {
-    return buildConditionBoxDescription(details);
+function normalizeDescription(details, normalizedCategory) {
+  // Description strategy follows product type/category, not supplier.
+  // Add branches for apparel / other types as needed.
+  if (normalizedCategory === NORMALIZED_CATEGORY.SNEAKERS) {
+    return buildSneakerDescription(details);
   }
 
   return '';
 }
 
-function buildConditionBoxDescription(details) {
-  // Public description from whatever we resolved.
+function buildSneakerDescription(details) {
+  // Sneaker public description from resolved condition / box.
   //   both set  → "Worn (No Box)"
   //   condition → "Worn"
   //   box only  → "Replacement Box"
@@ -156,15 +246,21 @@ function toTitleCase(title) {
     a: true,
     an: true,
     and: true,
+    as: true,
     at: true,
+    but: true,
     by: true,
     for: true,
+    if: true,
     in: true,
+    nor: true,
     of: true,
     on: true,
     or: true,
+    so: true,
     the: true,
     to: true,
+    via: true,
     with: true
   };
 
@@ -185,159 +281,79 @@ function toTitleCase(title) {
   return words.join(' ');
 }
 
-function parseSupplierDetails(supplier, selectedOptions, product) {
-  // Add new parser dispatches here, for example:
-  // if (supplier.parser === 'separate-options') return parseSeparateOptions(...);
-  if (supplier.parser === 'composite-shoe') {
-    return parseCompositeShoeDetails(supplier, selectedOptions, product || {});
-  }
+// ---------------------------------------------------------------------------
+// Shared: condition / box text → normalized values
+// ---------------------------------------------------------------------------
 
-  // Unknown parser names fail safely and create review tags downstream.
-  return blankDetails();
-}
-
-function parseCompositeShoeDetails(supplier, selectedOptions, product) {
-  // Size option values are either composite or size-only, split on " - ":
-  //   "12.5M/14W - Brand New - No Box"  →  [size, condition, box]
-  //   "10.5M / 12W"                     →  [size]
-  //   "7Y - Pre-Owned"                  →  [size, condition]
-  var sizeOption = findOption(selectedOptions, supplier.sizeOptionNames || ['Size']);
-  if (!sizeOption) return blankDetails('unknown-size');
-
-  var segments = optionValueText(sizeOption.value).split(/\s+-\s+/);
-  var sizeText = segments[0] || '';
-  var conditionText = segments[1] || '';
-  var boxText = segments[2] || '';
-  var sizes = parseUsSizeText(sizeText);
-
-  // Size gates condition/box. Examples that stop here (leave condition/box unset):
-  //   "3Y", "9C", "Y / 1.5W" → child-size
-  //   "Default Title", "copyt:temporary:size" → unknown-size
-  if (!sizes.m && !sizes.w) {
-    return {
-      normalizedMSize: '',
-      normalizedWSize: '',
-      normalizedCondition: '',
-      normalizedBox: '',
-      sizeError: classifyUnparsedSize(sizeText),
-      conditionError: '',
-      boxError: ''
-    };
-  }
-
-  // Condition: prefer the Size-option condition segment when present.
-  //   "10M - Pre-Owned - No Box" → map "Pre-Owned"
-  //   "10M - Refurbished - No Box" → empty + unknown-condition
-  //   "10.5M / 12W" (no condition segment) → metafield / Body / tags / type / title
-  var normalizedCondition = '';
-  var conditionError = '';
-  if (conditionText) {
-    normalizedCondition = supplier.conditionMap[normalizeKey(conditionText)] || '';
-    if (!normalizedCondition) conditionError = 'unknown-condition';
-  } else {
-    normalizedCondition = resolveCondition(supplier, product);
-  }
-
-  // Box: prefer the Size-option box segment when present.
-  //   "10M - Pre-Owned - No Box" → map "No Box"
-  //   "10M - Brand New - Custom Acrylic Case" → empty + unknown-box
-  //   "12M / 13.5W (Missing Lid)" → paren / tags / Body Box: cascade
-  var normalizedBox = '';
-  var boxError = '';
-  if (boxText) {
-    normalizedBox = supplier.boxMap[normalizeKey(boxText)] || '';
-    if (!normalizedBox) boxError = 'unknown-box';
-  } else {
-    normalizedBox = resolveBox(supplier, sizeText, product);
-  }
-
-  return {
-    normalizedMSize: sizes.m || '',
-    normalizedWSize: sizes.w || '',
-    normalizedCondition: normalizedCondition,
-    normalizedBox: normalizedBox,
-    sizeError: '',
-    conditionError: conditionError,
-    boxError: boxError
-  };
-}
-
-function classifyUnparsedSize(sizeText) {
-  // Strip trailing paren notes the same way size parsing does,
-  // e.g. "7Y (Missing Lid)" → "7Y".
-  var text = (sizeText || '').trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
-  if (!text) return 'unknown-size';
-
-  // Youth / GS below 3.5Y, or broken values without a youth number.
-  // Examples: "3Y", "3Y / 4.5W", "Y / 1.5W"
-  // (3.5Y+ is converted to adult M/W in parseUsSizeText.)
-  if (/\d(?:\.\d+)?\s*Y\b/i.test(text) || /^Y(?:\s*\/|\s*$)/i.test(text)) {
-    return 'child-size';
-  }
-
-  // Child / PS, e.g. "9C", "13.5C"
-  if (/\d(?:\.\d+)?\s*C\b/i.test(text)) {
-    return 'child-size';
-  }
-
-  return 'unknown-size';
-}
-
-function resolveCondition(supplier, product) {
-  // Used when the Size option has no condition segment (size-only values).
-  // Example: option "10.5M / 12W" with metafield "Pre-Owned" → Worn.
-  // Sources, first hit wins: metafield → Body "Condition:" → tags → type → title.
-  // No hit → empty string (unset), not an import error.
-  var sources = [
-    product.conditionMetafield,
-    bodyField(product.description, 'Condition'),
-    product.tags,
-    product.productType,
-    product.title
-  ];
-
-  for (var i = 0; i < sources.length; i++) {
-    var mapped = conditionFromText(supplier, sources[i]);
-    if (mapped) return mapped;
-  }
-
-  return '';
-}
-
-function resolveBox(supplier, sizeText, product) {
-  // Used when the Size option has no box segment.
-  // Try, in order:
-  //   1) trailing paren on size text — "12M / 13.5W (Missing Lid)"
-  //   2) tags — "no_box", "special-no_box"
-  //   3) Body labeled field — "Box: No Box" / "<strong>Box:</strong> Replacement Box"
-  // No signal → leave unset (do not invent With Box).
-
-  var parenMatch = (sizeText || '').match(/\(([^)]+)\)\s*$/);
-  if (parenMatch) {
-    var fromParen = mapBox(supplier, parenMatch[1]);
-    if (fromParen) return fromParen;
-  }
-
-  var fromTags = boxFromTags(supplier, product.tags);
-  if (fromTags) return fromTags;
-
-  var fromBody = mapBox(supplier, bodyField(product.description, 'Box'));
-  if (fromBody) return fromBody;
-
-  return '';
-}
-
-function mapBox(supplier, raw) {
+function mapBox(raw) {
   if (!raw) return '';
-  return supplier.boxMap[normalizeKey(raw)] || '';
+  return BOX_MAP[normalizeKey(raw)] || '';
 }
 
-function boxFromTags(supplier, tags) {
+function mapConditionExact(raw) {
+  // Exact CONDITION_MAP lookup only (used for explicit option segments).
+  if (!raw) return '';
+  return CONDITION_MAP[normalizeKey(raw)] || '';
+}
+
+function conditionScanForm(value) {
+  // Collapse punctuation so map phrases match free text variants
+  // ("pre-owned" / "pre owned", "lightly_worn" / "lightly worn").
+  return normalizeKey(value).replace(/[_-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function conditionFromText(text) {
+  // Map-driven: exact hit first, then scan CONDITION_MAP phrases inside free text.
+  // Worn beats Brand New when both appear. Short keys (new/worn/used) use word
+  // boundaries; "new" is ignored inside "New Balance".
+  var exactKey = normalizeKey(text);
+  if (!exactKey) return '';
+  if (CONDITION_MAP[exactKey]) return CONDITION_MAP[exactKey];
+
+  var scan = conditionScanForm(text);
+  if (!scan) return '';
+
+  var wornHit = false;
+  var brandNewHit = false;
+  var brandNewPhraseHit = false;
+
+  for (var mapKey in CONDITION_MAP) {
+    if (!Object.prototype.hasOwnProperty.call(CONDITION_MAP, mapKey)) continue;
+
+    var phrase = conditionScanForm(mapKey);
+    if (!phrase) continue;
+
+    var matched;
+    if (phrase === 'new' || phrase === 'worn' || phrase === 'used') {
+      matched = new RegExp('\\b' + phrase + '\\b').test(scan);
+    } else {
+      matched = scan.indexOf(phrase) !== -1;
+    }
+    if (!matched) continue;
+
+    if (CONDITION_MAP[mapKey] === NORMALIZED_CONDITION.WORN) {
+      wornHit = true;
+    } else if (CONDITION_MAP[mapKey] === NORMALIZED_CONDITION.BRAND_NEW) {
+      brandNewHit = true;
+      if (phrase !== 'new') brandNewPhraseHit = true;
+    }
+  }
+
+  if (wornHit) return NORMALIZED_CONDITION.WORN;
+  if (brandNewHit) {
+    if (!brandNewPhraseHit && scan.indexOf('new balance') !== -1) return '';
+    return NORMALIZED_CONDITION.BRAND_NEW;
+  }
+
+  return '';
+}
+
+function boxFromTags(tags) {
   if (!tags) return '';
 
   var parts = tags.toString().split(',');
   for (var i = 0; i < parts.length; i++) {
-    var mapped = mapBox(supplier, parts[i]);
+    var mapped = mapBox(parts[i]);
     if (mapped) return mapped;
   }
 
@@ -362,102 +378,67 @@ function bodyField(html, label) {
   return match ? match[1].trim() : '';
 }
 
-function conditionFromText(supplier, text) {
-  var key = normalizeKey(text);
-  if (!key) return '';
+// ---------------------------------------------------------------------------
+// Shared: size parse / convert / consistency
+// ---------------------------------------------------------------------------
 
-  // Exact map hit (e.g. metafield "Brand New" / "Pre-Owned").
-  if (supplier.conditionMap[key]) return supplier.conditionMap[key];
-
-  // Substring signals. Check worn/pre-owned/used before brand new when both appear.
-  if (key.indexOf('pre-owned') !== -1 || key.indexOf('pre owned') !== -1) {
-    return supplier.conditionMap['pre-owned'] || '';
-  }
-  if (key.indexOf('lightly worn') !== -1 ||
-      key.indexOf('moderately worn') !== -1 ||
-      key.indexOf('heavily worn') !== -1 ||
-      key.indexOf('lightly_worn') !== -1 ||
-      key.indexOf('moderately_worn') !== -1 ||
-      key.indexOf('heavily_worn') !== -1) {
-    return supplier.conditionMap['pre-owned'] || '';
-  }
-  if (/\bworn\b/.test(key) || /\bused\b/.test(key)) {
-    return supplier.conditionMap['worn'] || supplier.conditionMap['used'] || supplier.conditionMap['pre-owned'] || '';
-  }
-  if (key.indexOf('brand new') !== -1) {
-    return supplier.conditionMap['brand new'] || '';
-  }
-  // Standalone "new" means Brand New; skip the brand name "New Balance".
-  if (/\bnew\b/.test(key) && key.indexOf('new balance') === -1) {
-    return supplier.conditionMap['brand new'] || supplier.conditionMap['new'] || '';
-  }
-
-  return '';
-}
-
-function mapCondition(supplier, raw) {
-  return conditionFromText(supplier, raw);
-}
-
-function parseUsSizeText(sizeText) {
-  // Parse the size segment only (first " - "-separated segment of the Size option).
+function parseSizeText(sizeText) {
+  // Parse a size token into US M/W (or EU-derived M/W). Caller supplies the
+  // size text only — suppliers decide how to extract it from options.
   // Examples that must match as a whole token (no partial matches):
   //   "12.5M/14W", "10.5M / 12W", "10.5M", "11.5W", "10.5", "EU44", "3.5Y", "7Y / 8.5W"
   // Examples that stay unparsed: "Y / 1.5W", "3Y", "9C", "Default Title"
   var text = (sizeText || '').trim();
 
-  // Drop trailing notes glued onto size-only options,
-  // e.g. "12M / 13.5W (Missing Lid)" → "12M / 13.5W".
+  // Drop trailing notes, e.g. "12M / 13.5W (Missing Lid)" → "12M / 13.5W".
   text = text.replace(/\s*\([^)]*\)\s*$/, '').trim();
 
   // European size conversion (e.g., "EU44", "EU 44", "EU44.5")
+  // Formula used here: M = EU−33, W = EU−31 → always W = M + 2.
   var euMatch = text.match(/^EU\s*([0-9]+(?:\.[0-9]+)?)$/i);
   if (euMatch) {
     var euVal = parseFloat(euMatch[1]);
     if (!isNaN(euVal)) {
-      return { m: (euVal - 33).toString(), w: (euVal - 31).toString() };
+      return { m: (euVal - 33).toString(), w: (euVal - 31).toString(), system: 'eu' };
     }
   }
 
   // Men's and women's sizes in the common "12.5M/14W" order (spaces optional).
   var match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*M(?:en'?s)?\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*W$/i);
-  if (match) return { m: match[1], w: match[2] };
+  if (match) return { m: match[1], w: match[2], system: 'us' };
 
   // Same data in reverse order, e.g. "14W/12.5M".
   match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*W(?:omen'?s)?\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*M$/i);
-  if (match) return { m: match[2], w: match[1] };
+  if (match) return { m: match[2], w: match[1], system: 'us' };
 
   // Men's-only size. Derive women's as men's + 1.5 (standard US pairing).
   match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*M(?:en'?s)?$/i);
-  if (match) return { m: match[1], w: offsetUsSize(match[1], 1.5) };
+  if (match) return { m: match[1], w: offsetUsSize(match[1], 1.5), system: 'us' };
 
   // Women's-only size. Derive men's as women's - 1.5.
   match = text.match(/^(?:US\s*)?([0-9]+(?:\.[0-9]+)?)\s*W(?:omen'?s)?$/i);
-  if (match) return { m: offsetUsSize(match[1], -1.5), w: match[1] };
+  if (match) return { m: offsetUsSize(match[1], -1.5), w: match[1], system: 'us' };
 
-  // Bare number (common on pre-owned single-SKU rows) — treat as men's.
+  // Bare number — treat as men's.
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)$/);
-  if (match) return { m: match[1], w: offsetUsSize(match[1], 1.5) };
+  if (match) return { m: match[1], w: offsetUsSize(match[1], 1.5), system: 'us' };
 
   // Youth (GS) 3.5Y and up map onto adult US sizing: men's = youth number,
   // women's = youth + 1.5 (or as written when a Y/W pair is present).
-  //   "3.5Y" → M 3.5 / W 5
-  //   "7Y" → M 7 / W 8.5
-  //   "6.5Y / 8W" → M 6.5 / W 8
   // Below 3.5Y and child (C) sizes stay unparsed → child-size.
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*Y\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*W$/i);
   if (match && parseFloat(match[1]) >= 3.5) {
-    return { m: match[1], w: match[2] };
+    return { m: match[1], w: match[2], system: 'us' };
   }
 
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*W\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*Y$/i);
   if (match && parseFloat(match[2]) >= 3.5) {
-    return { m: match[2], w: match[1] };
+    return { m: match[2], w: match[1], system: 'us' };
   }
 
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*Y$/i);
   if (match && parseFloat(match[1]) >= 3.5) {
-    return { m: match[1], w: offsetUsSize(match[1], 1.5) };
+    return { m: match[1], w: offsetUsSize(match[1], 1.5), system: 'us' };
   }
 
   // Unknown size format. The caller turns this into child-size or unknown-size.
@@ -469,6 +450,43 @@ function offsetUsSize(sizeText, delta) {
   var value = Math.round((parseFloat(sizeText) + delta) * 2) / 2;
   return value.toString();
 }
+
+function sizesAreConsistent(sizes) {
+  // Fixed pairing by source system:
+  //   US (incl. youth→adult): W = M + 1.5
+  //   EU conversion:          W = M + 2
+  var m = parseFloat(sizes.m);
+  var w = parseFloat(sizes.w);
+  if (isNaN(m) || isNaN(w)) return false;
+
+  var expectedDelta = sizes.system === 'eu' ? 2 : 1.5;
+  return Math.abs((w - m) - expectedDelta) < 0.01;
+}
+
+function classifyUnparsedSize(sizeText) {
+  // Strip trailing paren notes the same way size parsing does,
+  // e.g. "7Y (Missing Lid)" → "7Y".
+  var text = (sizeText || '').trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
+  if (!text) return 'unknown-size';
+
+  // Youth / GS below 3.5Y, or broken values without a youth number.
+  // Examples: "3Y", "3Y / 4.5W", "Y / 1.5W"
+  // (3.5Y+ is converted to adult M/W in parseSizeText.)
+  if (/\d(?:\.\d+)?\s*Y\b/i.test(text) || /^Y(?:\s*\/|\s*$)/i.test(text)) {
+    return 'child-size';
+  }
+
+  // Child / PS, e.g. "9C", "13.5C"
+  if (/\d(?:\.\d+)?\s*C\b/i.test(text)) {
+    return 'child-size';
+  }
+
+  return 'unknown-size';
+}
+
+// ---------------------------------------------------------------------------
+// Shared: category
+// ---------------------------------------------------------------------------
 
 function normalizeCategory(category, productType) {
   // Normalize known sneaker/shoe categories. Accept either a Shopify-style
@@ -482,30 +500,29 @@ function normalizeCategory(category, productType) {
   var categoryKey = normalizeKey(categoryName);
   var productTypeKey = normalizeKey(productType);
 
-  // Match if category is or contains shoes or sneakers (e.g., 'Apparel & Accessories > Shoes > Sneakers')
-  if (categoryKey === 'shoes' || categoryKey === 'sneakers' ||
-      categoryKey.indexOf('shoes') !== -1 || categoryKey.indexOf('sneakers') !== -1) {
-    return 'Sneakers';
-  }
+  var fromCategory = categoryFromName(categoryKey);
+  if (fromCategory) return fromCategory;
 
-  // Fallback match for all footwear product types present in inventory
-  var validShoeTypes = [
-    "men's shoes",
-    "women's shoes",
-    "kid's shoes",
-    "kids's shoes",
-    "toddler's",
-    "toddlers",
-    "preschool",
-    "shoes",
-    "sneakers",
-    "pre-owned sneakers"
-  ];
-
-  if (validShoeTypes.indexOf(productTypeKey) !== -1) return 'Sneakers';
+  if (PRODUCT_TYPE_MAP[productTypeKey]) return PRODUCT_TYPE_MAP[productTypeKey];
 
   return '';
 }
+
+function categoryFromName(categoryKey) {
+  if (!categoryKey) return '';
+  if (CATEGORY_MAP[categoryKey]) return CATEGORY_MAP[categoryKey];
+
+  for (var mapKey in CATEGORY_MAP) {
+    if (!Object.prototype.hasOwnProperty.call(CATEGORY_MAP, mapKey)) continue;
+    if (categoryKey.indexOf(mapKey) !== -1) return CATEGORY_MAP[mapKey];
+  }
+
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// Shared: errors / option helpers / blanks
+// ---------------------------------------------------------------------------
 
 function collectImportErrors(supplier, details, normalizedCategory) {
   // These codes are intended for tags/review workflows and quick debugging.
@@ -592,3 +609,143 @@ function blankDetails(sizeError) {
     boxError: ''
   };
 }
+
+// ---------------------------------------------------------------------------
+// Supplier parsers — KCP size option (dash segments + cascades)
+// ---------------------------------------------------------------------------
+
+function parseSupplierDetails(supplier, selectedOptions, product) {
+  // Add new parser dispatches here, for example:
+  // if (supplier.parser === 'other-vendor-…') return parseOtherVendor(...);
+  if (supplier.parser === 'kcp-size-option') {
+    return parseKcpSizeOption(supplier, selectedOptions, product || {});
+  }
+
+  // Unknown parser names fail safely and create review tags downstream.
+  return blankDetails();
+}
+
+function parseKcpSizeOption(supplier, selectedOptions, product) {
+  // KCP Size option: optional " - "-separated size | condition | box segments.
+  //   "12.5M/14W - Brand New - No Box"  →  [size, condition, box]
+  //   "10.5M / 12W"                     →  [size]
+  //   "7Y - Pre-Owned"                  →  [size, condition]
+  var sizeOption = findOption(selectedOptions, supplier.sizeOptionNames || ['Size']);
+  if (!sizeOption) return blankDetails('unknown-size');
+
+  var segments = optionValueText(sizeOption.value).split(/\s+-\s+/);
+  var sizeText = segments[0] || '';
+  var conditionText = segments[1] || '';
+  var boxText = segments[2] || '';
+  var sizes = parseSizeText(sizeText);
+
+  // Size gates condition/box. Examples that stop here (leave condition/box unset):
+  //   "3Y", "9C", "Y / 1.5W" → child-size
+  //   "Default Title", "copyt:temporary:size" → unknown-size
+  //   "14M/12.5W", "7Y / 1.5W" → inconsistent-size (US: W ≠ M+1.5)
+  if (!sizes.m && !sizes.w) {
+    return {
+      normalizedMSize: '',
+      normalizedWSize: '',
+      normalizedCondition: '',
+      normalizedBox: '',
+      sizeError: classifyUnparsedSize(sizeText),
+      conditionError: '',
+      boxError: ''
+    };
+  }
+
+  if (!sizesAreConsistent(sizes)) {
+    return {
+      normalizedMSize: '',
+      normalizedWSize: '',
+      normalizedCondition: '',
+      normalizedBox: '',
+      sizeError: 'inconsistent-size',
+      conditionError: '',
+      boxError: ''
+    };
+  }
+
+  // Condition: prefer the Size-option condition segment when present.
+  //   "10M - Pre-Owned - No Box" → map "Pre-Owned"
+  //   "10M - Refurbished - No Box" → empty + unknown-condition
+  //   "10.5M / 12W" (no condition segment) → metafield / Body / tags / type / title
+  var normalizedCondition = '';
+  var conditionError = '';
+  if (conditionText) {
+    normalizedCondition = mapConditionExact(conditionText);
+    if (!normalizedCondition) conditionError = 'unknown-condition';
+  } else {
+    normalizedCondition = resolveKcpCondition(product);
+  }
+
+  // Box: prefer the Size-option box segment when present.
+  //   "10M - Pre-Owned - No Box" → map "No Box"
+  //   "10M - Brand New - Custom Acrylic Case" → empty + unknown-box
+  //   "12M / 13.5W (Missing Lid)" → paren / tags / Body Box: cascade
+  var normalizedBox = '';
+  var boxError = '';
+  if (boxText) {
+    normalizedBox = mapBox(boxText);
+    if (!normalizedBox) boxError = 'unknown-box';
+  } else {
+    normalizedBox = resolveKcpBox(sizeText, product);
+  }
+
+  return {
+    normalizedMSize: sizes.m || '',
+    normalizedWSize: sizes.w || '',
+    normalizedCondition: normalizedCondition,
+    normalizedBox: normalizedBox,
+    sizeError: '',
+    conditionError: conditionError,
+    boxError: boxError
+  };
+}
+
+function resolveKcpCondition(product) {
+  // KCP cascade when the Size option has no condition segment.
+  // Example: option "10.5M / 12W" with metafield "Pre-Owned" → Worn.
+  // Sources, first hit wins: metafield → Body "Condition:" → tags → type → title.
+  // No hit → empty string (unset), not an import error.
+  var sources = [
+    product.conditionMetafield,
+    bodyField(product.description, 'Condition'),
+    product.tags,
+    product.productType,
+    product.title
+  ];
+
+  for (var i = 0; i < sources.length; i++) {
+    var mapped = conditionFromText(sources[i]);
+    if (mapped) return mapped;
+  }
+
+  return '';
+}
+
+function resolveKcpBox(sizeText, product) {
+  // KCP cascade when the Size option has no box segment.
+  // Try, in order:
+  //   1) trailing paren on size text — "12M / 13.5W (Missing Lid)"
+  //   2) tags — "no_box", "special-no_box"
+  //   3) Body labeled field — "Box: No Box" / "<strong>Box:</strong> Replacement Box"
+  // No signal → leave unset (do not invent With Box).
+
+  var parenMatch = (sizeText || '').match(/\(([^)]+)\)\s*$/);
+  if (parenMatch) {
+    var fromParen = mapBox(parenMatch[1]);
+    if (fromParen) return fromParen;
+  }
+
+  var fromTags = boxFromTags(product.tags);
+  if (fromTags) return fromTags;
+
+  var fromBody = mapBox(bodyField(product.description, 'Box'));
+  if (fromBody) return fromBody;
+
+  return '';
+}
+
+export { NORMALIZED_CONDITION, NORMALIZED_BOX, NORMALIZED_CATEGORY, CONDITION_MAP, BOX_MAP, PRODUCT_TYPE_MAP, CATEGORY_MAP, CATEGORY_GIDS };

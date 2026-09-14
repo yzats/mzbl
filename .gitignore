@@ -69,6 +69,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp 
-*.csv
 mzbl-ui/settings.json
 sqs-tools/sqs-stock-remover/squarespace_products_cache.json
+*.csv

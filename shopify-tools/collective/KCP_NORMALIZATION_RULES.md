@@ -2,9 +2,9 @@
 
 **Vendor:** Kicks Collective PA  
 **Prefix:** `KCP`  
-**Code:** [`importer.js`](importer.js) supplier key `'Kicks Collective PA'`, parser `composite-shoe`
+**Code:** [`importer.js`](importer.js) supplier key `'Kicks Collective PA'`, parser `kcp-size-option`
 
-These rules define how Collective import normalizes Kicks Collective PA Shopify product/variant data (Flow Run Code and the local CSV runner) into Flow-ready fields. Keep this file in sync when changing KCP behavior in `importer.js`.
+How KCP **segments** option values and **cascades** product fields when a segment is missing. Shared size conversion, `CONDITION_MAP`, and `BOX_MAP` are documented in [`SHARED_NORMALIZATION.md`](SHARED_NORMALIZATION.md).
 
 ---
 
@@ -17,188 +17,79 @@ These rules define how Collective import normalizes Kicks Collective PA Shopify 
 | `newSku` | `KCP-{numericVariantId}` from Shopify GID |
 | Local CSV runner | Forces vendor to `Kicks Collective PA` regardless of brand in the export |
 
+**Formatters:** `title-case` for titles. Description uses the shared sneaker formatter when category is Sneakers (see [`SHARED_NORMALIZATION.md`](SHARED_NORMALIZATION.md)).
+
+**Size option names:** `Size`, `Shoe size`, or blank (Shopify CSV continuation rows).
+
 ---
 
-## Size
+## Segmentation (` - `-separated Size option)
 
-**Input:** variant selected option — name `Size`, `Shoe size`, or blank (Shopify CSV continuation rows). Value may be composite or size-only:
-
-| Form | Example | Segments (` - `-separated) |
+| Form | Example | Segments |
 |---|---|---|
 | Composite | `12.5M/14W - Brand New - No Box` | size \| condition \| box |
-| Size only | `12M / 13.5W`, `10.5`, `7Y` | size only (condition/box from other fields) |
-
-**Outputs:** `normalizedMSize` and `normalizedWSize` (US men’s / women’s as strings), or both empty with `child-size` / `unknown-size`.
-
-**Gate:** Size must parse successfully before condition or box are normalized. If size cannot be determined, leave condition and box unset.
-
-### Where the size text comes from
+| Size only | `12M / 13.5W`, `10.5`, `7Y` | size only (condition/box from cascade) |
 
 1. Read the Size option value (names above).
-2. If the value has ` - `-separated segments, use **only the first segment** as the size text.  
-   Example: `10M - Pre-Owned - No Box` → size text `10M`.
-3. If that size text ends with a parenthetical note, drop the note before parsing size (box may still read it).  
-   Example: `12M / 13.5W (Missing Lid)` → size text `12M / 13.5W`.
+2. Split on ` - `. Segment 1 → size text; segment 2 → condition; segment 3 → box.
+3. Strip trailing `(…)` from the size text before calling shared size parse (paren may still be a box signal).  
+   Example: `12M / 13.5W (Missing Lid)` → size `12M / 13.5W`.
 
 If no matching option exists (e.g. `Title` / `Default Title`), sizes stay empty and condition/box are not normalized.
 
-### Accepted adult size patterns
-
-The whole size text must match one pattern (no partial matches):
-
-| Pattern | Examples | Result |
-|---|---|---|
-| Men’s + women’s pair | `12.5M/14W`, `10.5M / 12W`, `US 10M / 11.5W` | M and W as written |
-| Women’s + men’s pair | `14W/12.5M` | Swapped to M / W |
-| Men’s only | `10.5M`, `US 10M`, `10 Men's` | M as written; W = M + 1.5 |
-| Women’s only | `8.5W`, `11.5W` | W as written; M = W − 1.5 |
-| Bare number | `10`, `10.5` | Treated as men’s; W = M + 1.5 |
-| EU (must say `EU`) | `EU44`, `EU 45` | M = EU−33, W = EU−31 |
-| Youth **3.5Y and up** | `3.5Y`, `7Y`, `6.5Y / 8W` | M = youth number; W = youth + 1.5 (or as written in a Y/W pair) |
-
-Optional `Men's` / `Women's` spellings and an optional `US` prefix are allowed where shown above.
-
-### Not accepted (adult)
-
-These leave both sizes empty and leave condition/box unset:
-
-| Pattern | Error |
-|---|---|
-| Youth **below 3.5Y** (`3Y`, `3Y / 4.5W`) or broken `Y / 1.5W` | `child-size` |
-| Child / PS (`9C`, `13.5C`) | `child-size` |
-| Letter sizes, URL slugs, `Default Title`, other junk | `unknown-size` |
+**Gate:** Shared size parse + consistency must succeed before condition or box run. On `child-size` / `unknown-size` / `inconsistent-size`, leave condition and box unset.
 
 ---
 
-## Condition
+## Condition cascade
 
-**Input (in order):** Size-option condition segment → metafield → Body `Condition:` → tags → product type → title.
+**When:** size parsed OK, and there is **no** condition segment on the Size option.
 
-**Outputs:** `Brand New` | `Worn` | empty (unset).  
-`unknown-condition` is flagged only when an explicit Size-option condition text is unmapped (field stays empty).
+**Order (first hit wins)** — each field scanned with shared `conditionFromText`:
 
-### Source order (first hit wins)
+1. Metafield `custom.productcondition`
+2. Body labeled `Condition:` only (HTML wrapping optional; free prose ignored)
+3. Tags
+4. Product type
+5. Title
+6. Else → **leave unset** (empty). Not an import error.
 
-1. **Condition text in the Size option** — if the Size value has two or more ` - `-separated segments, use the second one (exact `conditionMap` only).  
-   Example: `10M - Pre-Owned - No Box` → `Worn`.  
-   If that segment is present but not in `conditionMap` → leave empty + `unknown-condition`.
-2. **Metafield** `custom.productcondition` (CSV: `Condition (product.metafields.custom.productcondition)`)
-3. **Body** — labeled `Condition:` only (HTML wrapping optional; free prose ignored)
-4. **Tags**
-5. **Product type**
-6. **Title**
-7. Else → **leave unset** (empty string). Not an import error.
+**When a condition segment is present** (e.g. `10M - Pre-Owned - No Box`):
 
-Requires a parseable size (see [Size](#size)). If size is unknown, condition stays unset (cascade does not run).
+- Exact `CONDITION_MAP` only (no substring scan).
+- Unmapped text → empty + `unknown-condition` (do not cascade).
 
-**Not used:** unlabeled Body prose; `Restock` alone (no default Brand New); Body `Condition: Not Specified` (treated as no signal).
-
-### Exact `conditionMap`
-
-| Raw (case-insensitive) | Normalized |
-|---|---|
-| `brand new` | Brand New |
-| `new` | Brand New |
-| `pre-owned` | Worn |
-| `worn` | Worn |
-| `used` | Worn |
-| `tried on` | Worn |
-| `vnds` | Worn |
-| `lightly worn` / `moderately worn` / `heavily worn` | Worn |
-
-### Text signals (metafield / Body Condition / tags / type / title)
-
-Same scanner for each field, in order:
-
-1. contains `pre-owned` or `pre owned` → Worn  
-2. contains `lightly|moderately|heavily worn` or `lightly_worn` / `moderately_worn` / `heavily_worn` → Worn  
-3. word-boundary `worn` or `used` → Worn  
-4. contains `brand new` → Brand New  
-5. word-boundary `new` → Brand New, unless text contains `new balance`
-
-If worn/pre-owned/used and new both appear in the **same** field, **Worn wins**.
+**Not used:** unlabeled Body prose; `Restock` alone; Body `Condition: Not Specified` (no signal).
 
 ---
 
-## Box
+## Box cascade
 
-**Input (in order):** Size-option box segment → trailing `(…)` on the size text → product tags → Body labeled `Box:`. Same Size-option forms as in [Size](#size).
+**When:** size parsed OK, and there is **no** box segment on the Size option.
 
-**Outputs:** `With Box` | `Damaged Box` | `Replacement Box` | `No Box` | `With Box - Missing Lid` | empty (unset).  
-`unknown-box` is flagged only when an explicit Size-option box text is unmapped (field stays empty).
+**Order (first hit wins)** — each candidate mapped with shared `BOX_MAP`:
 
-Runs only after size is successfully parsed. If size is unknown, box stays unset. **No default** — if nothing derives a box value, leave unset (same idea as condition).
+1. Trailing paren on size text — e.g. `12M / 13.5W (Missing Lid)`
+2. Tags — comma-separated, exact map keys (`no_box`, `special-no_box`, …)
+3. Body labeled `Box:` only  
+   Example: `Box: Replacement Box` or `<strong>Box:</strong> No Box`
+4. Else → **leave unset**. Not an import error. **No default** `With Box`.
 
-### Source order (first hit wins)
+**When a box segment is present** (third ` - ` piece):
 
-1. **Box text in the Size option** — if the Size value has three ` - `-separated segments, use the last one (exact `boxMap` only).  
-   Example: `10M - Pre-Owned - No Box` → `No Box`.  
-   If that last segment is present but not in `boxMap` → leave empty + `unknown-box` (do not keep looking).
-2. **Parenthetical note on the size text** — e.g. `12M / 13.5W (Missing Lid)` → `With Box - Missing Lid`.
-3. **Tags** — each comma-separated tag, exact `boxMap` keys (`no_box`, `special-no_box`, …).
-4. **Body** — labeled `Box:` only (HTML wrapping optional; free-form sentences ignored).  
-   Example: `Box: Replacement Box` or `<strong>Box:</strong> No Box`.
-5. Else → **leave unset** (empty string). Not an import error.
-
-### Exact `boxMap`
-
-| Raw (case-insensitive) | Normalized |
-|---|---|
-| `original box (good)` | With Box |
-| `original box (damaged)` | Damaged Box |
-| `damaged box` | Damaged Box |
-| `replacement box` | Replacement Box |
-| `no box` / `no_box` / `special-no_box` | No Box |
-| `missing lid` | With Box - Missing Lid |
-
-Parenthetical notes are ignored when parsing the numeric size, and separately checked as a box signal (step 2).
+- Exact `BOX_MAP` only.
+- Unmapped text → empty + `unknown-box` (do not cascade).
 
 ---
 
-## Title
+## Import errors (KCP context)
 
-**Formatter:** `title-case` — capitalize words; keep short all-caps tokens (`OG`, `SP`, …); lowercase small words (`a`, `the`, `of`, …) when not first/last.
-
-Does **not** strip size/condition phrases from the title (condition may still be *read* from title for the condition field).
-
----
-
-## Description
-
-**Formatter:** `condition-box`
-
-| Condition | Box | Description |
-|---|---|---|
-| set | set | `{condition} ({box})` — e.g. `Worn (No Box)` |
-| set | empty | `{condition}` |
-| empty | set | `{box}` — e.g. `With Box` |
-| empty | empty | empty (e.g. size unknown / nothing resolved) |
-
----
-
-## Category
-
-| Input | Normalized | GID |
-|---|---|---|
-| Category name contains `shoes` or `sneakers` | Sneakers | `gid://shopify/TaxonomyCategory/aa-sneakers` |
-| Type in: Men's/Women's/Kid's Shoes, Toddler's, Preschool, shoes, sneakers, Pre-Owned Sneakers | Sneakers | same |
-| Else | empty + `unknown-category` | *(empty)* |
-
----
-
-## Import errors
-
-Comma-separated codes when review is needed:
-
-| Code | When |
+| Code | When (under this parser) |
 |---|---|
 | `unknown-supplier` | Vendor not in `SUPPLIERS` |
-| `child-size` | Youth below 3.5Y, broken `Y / …`, or child (`C`) size |
-| `unknown-size` | No parseable adult M/W size (and not child/youth) |
-| `unknown-condition` | Size-option condition text present but unmapped (only when size parsed) |
-| `unknown-box` | Box segment present but unmapped (only when size parsed) |
-| `unknown-category` | Category unresolved |
+| `child-size` / `unknown-size` / `inconsistent-size` | Shared size rules (see shared doc); condition/box stay empty |
+| `unknown-condition` | Condition segment present but not in `CONDITION_MAP` |
+| `unknown-box` | Box segment present but not in `BOX_MAP` |
+| `unknown-category` | Shared category unresolved |
 
-`hasImportErrors` is true if any code is present.
-
-Missing condition/box signals leave those fields empty and do **not** set `unknown-condition` / `unknown-box`. When size is `child-size` or `unknown-size`, condition and box stay empty.
+`hasImportErrors` is true if any code is present. Missing cascade signals leave fields empty and do **not** set `unknown-condition` / `unknown-box`.
