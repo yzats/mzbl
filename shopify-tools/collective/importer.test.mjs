@@ -303,12 +303,37 @@ describe('Shopify Importer Unit Tests', () => {
       const fromTitleNew = main(createInput('9.5', {
         title: 'NEW SIZE 9.5 - Nike Dunk Low Retro Premium Philly'
       }));
-      assert.equal(fromTitleNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+      assert.equal(fromTitleNew.normalizedCondition, '');
 
       const fromTitleUsed = main(createInput('10', {
         title: 'Jordan 1 Retro High Used Size 10'
       }));
       assert.equal(fromTitleUsed.normalizedCondition, NORMALIZED_CONDITION.WORN);
+
+      const fromBodyNew = main(createInput('10.5M / 12W', {
+        description: 'Condition: New'
+      }));
+      assert.equal(fromBodyNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+
+      const fromOwnLineNew = main(createInput('10.5M / 12W', {
+        description: 'SKU: ABC<br>Released: date_format(2013-03-29, "MM/DD/YYYY")<br>new<br><br><ul><li>100% Authentic</li></ul>'
+      }));
+      assert.equal(fromOwnLineNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+
+      const ownLineNewIgnoredIfLabeled = main(createInput('10.5M / 12W', {
+        description: 'Condition: Not Specified<br>new<br>'
+      }));
+      assert.equal(ownLineNewIgnoredIfLabeled.normalizedCondition, '');
+
+      const fromTagsNewOnly = main(createInput('10.5M / 12W', { tags: 'new, Restock' }));
+      assert.equal(fromTagsNewOnly.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+
+      const fromMfNew = main(createInput('10.5M / 12W', { conditionMetafield: 'New' }));
+      assert.equal(fromMfNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+
+      const fromOptionNew = main(createInput('10M - New - No Box'));
+      assert.equal(fromOptionNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+      assert.equal(fromOptionNew.normalizedBox, NORMALIZED_BOX.NO_BOX);
 
       const fromMfWorn = main(createInput('10.5M / 12W', { conditionMetafield: NORMALIZED_CONDITION.WORN }));
       assert.equal(fromMfWorn.normalizedCondition, NORMALIZED_CONDITION.WORN);
@@ -318,6 +343,48 @@ describe('Shopify Importer Unit Tests', () => {
       }));
       assert.equal(newBalanceIgnored.normalizedCondition, '');
       assert.ok(!newBalanceIgnored.importErrors.includes('unknown-condition'));
+    });
+
+    it('does not treat standalone new in title or non-own-line body as Brand New', () => {
+      const titleNewSize = main(createInput('9.5', {
+        title: 'NEW SIZE 9.5 - Nike Dunk Low Retro Premium Philly'
+      }));
+      assert.equal(titleNewSize.normalizedCondition, '');
+
+      const titleNewYear = main(createInput('10.5M / 12W', {
+        title: 'Jordan 6 Retro Low GC Lunar New Year (2022)'
+      }));
+      assert.equal(titleNewYear.normalizedCondition, '');
+
+      const titleNewBalance = main(createInput('10.5M / 12W', {
+        title: 'New Balance 990v3 Made In USA Boston Marathon'
+      }));
+      assert.equal(titleNewBalance.normalizedCondition, '');
+
+      const bodyNewBalance = main(createInput('10.5M / 12W', {
+        description: 'New Balance 1906R White Black Metallic<br>SKU: U1906RCI<br>'
+      }));
+      assert.equal(bodyNewBalance.normalizedCondition, '');
+
+      const bodyMidLineNew = main(createInput('10.5M / 12W', {
+        description: 'Colorway: Navy/New Grey<br>Released: date_format(2024-01-01, "MM/DD/YYYY")<br>'
+      }));
+      assert.equal(bodyMidLineNew.normalizedCondition, '');
+
+      const bodyProseNew = main(createInput('10.5M / 12W', {
+        description: '<p>Ships quickly with new laces and safe packaging.</p>'
+      }));
+      assert.equal(bodyProseNew.normalizedCondition, '');
+
+      const bodyListItemNew = main(createInput('10.5M / 12W', {
+        description: '<ul><li>100% Authentic</li><li>new style release</li></ul>'
+      }));
+      assert.equal(bodyListItemNew.normalizedCondition, '');
+
+      const bodyNewNotOwnLine = main(createInput('10.5M / 12W', {
+        description: 'SKU: ABC new Released: 2024<br>'
+      }));
+      assert.equal(bodyNewNotOwnLine.normalizedCondition, '');
     });
 
     it('prefers option condition segment over product metafield', () => {

@@ -45,21 +45,21 @@ If no matching option exists (e.g. `Title` / `Default Title`), sizes stay empty 
 
 **When:** size parsed OK, and there is **no** condition segment on the Size option.
 
-**Order (first hit wins)** — each field scanned with shared `conditionFromText`:
+**Order (first hit wins):**
 
-1. Metafield `custom.productcondition`
-2. Body labeled `Condition:` only (HTML wrapping optional; free prose ignored)
-3. Tags
-4. Product type
-5. Title
+1. Metafield `custom.productcondition` — `mapMetafieldCondition` (map scan + exact bare `new`)
+2. Body via `mapBodyCondition` — labeled `Condition:` (map + bare `new`), else own-line `new`
+3. Tags — `conditionFromTags` (map scan + per-tag exact bare `new`)
+4. Product type — `conditionFromText` (no bare `new`)
+5. Title — `conditionFromText` (no bare `new`)
 6. Else → **leave unset** (empty). Not an import error.
 
-**When a condition segment is present** (e.g. `10M - Pre-Owned - No Box`):
+**When a condition segment is present** (e.g. `10M - Pre-Owned - No Box` or `10M - New - No Box`):
 
-- Exact `CONDITION_MAP` only (no substring scan).
+- `mapConditionExact` only (CONDITION_MAP + exact bare `new`; no substring scan).
 - Unmapped text → empty + `unknown-condition` (do not cascade).
 
-**Not used:** unlabeled Body prose; `Restock` alone; Body `Condition: Not Specified` (no signal).
+**Not used:** unlabeled Body prose (except own-line `new`); `Restock` alone; Body `Condition: Not Specified` (no signal — does not fall through to own-line `new`); bare `new` inside title/type free text.
 
 ---
 

@@ -73,9 +73,9 @@ var CATEGORY_GIDS = {};
 CATEGORY_GIDS[NORMALIZED_CATEGORY.SNEAKERS] = 'gid://shopify/TaxonomyCategory/aa-sneakers';
 
 // Keys are normalized to lowercase before lookup.
+// Note: bare "new" is NOT here — it is Body-only (see mapBodyCondition).
 var CONDITION_MAP = {
   'brand new': NORMALIZED_CONDITION.BRAND_NEW,
-  'new': NORMALIZED_CONDITION.BRAND_NEW,
   'pre-owned': NORMALIZED_CONDITION.WORN,
   'worn': NORMALIZED_CONDITION.WORN,
   'used': NORMALIZED_CONDITION.WORN,
@@ -290,10 +290,20 @@ function mapBox(raw) {
   return BOX_MAP[normalizeKey(raw)] || '';
 }
 
+function isBareNewToken(text) {
+  // Whole value is exactly "new" (optional period). Not a substring scan —
+  // used for option segments, metafield, tags, and Body Condition / own-line.
+  return /^new\.?$/i.test((text || '').toString().trim());
+}
+
 function mapConditionExact(raw) {
-  // Exact CONDITION_MAP lookup only (used for explicit option segments).
+  // Exact CONDITION_MAP lookup, plus exact bare "new" → Brand New.
+  // Used for Size-option condition segments.
   if (!raw) return '';
-  return CONDITION_MAP[normalizeKey(raw)] || '';
+  var key = normalizeKey(raw);
+  if (CONDITION_MAP[key]) return CONDITION_MAP[key];
+  if (isBareNewToken(raw)) return NORMALIZED_CONDITION.BRAND_NEW;
+  return '';
 }
 
 function conditionScanForm(value) {
@@ -304,8 +314,10 @@ function conditionScanForm(value) {
 
 function conditionFromText(text) {
   // Map-driven: exact hit first, then scan CONDITION_MAP phrases inside free text.
-  // Worn beats Brand New when both appear. Short keys (new/worn/used) use word
-  // boundaries; "new" is ignored inside "New Balance".
+  // Worn beats Brand New when both appear. Short keys (worn/used) use word
+  // boundaries so they do not match inside longer tokens.
+  // Bare "new" is intentionally absent from CONDITION_MAP — use isBareNewToken
+  // / mapConditionExact / mapBodyCondition / conditionFromTags instead.
   var exactKey = normalizeKey(text);
   if (!exactKey) return '';
   if (CONDITION_MAP[exactKey]) return CONDITION_MAP[exactKey];
@@ -315,7 +327,6 @@ function conditionFromText(text) {
 
   var wornHit = false;
   var brandNewHit = false;
-  var brandNewPhraseHit = false;
 
   for (var mapKey in CONDITION_MAP) {
     if (!Object.prototype.hasOwnProperty.call(CONDITION_MAP, mapKey)) continue;
@@ -324,7 +335,7 @@ function conditionFromText(text) {
     if (!phrase) continue;
 
     var matched;
-    if (phrase === 'new' || phrase === 'worn' || phrase === 'used') {
+    if (phrase === 'worn' || phrase === 'used') {
       matched = new RegExp('\\b' + phrase + '\\b').test(scan);
     } else {
       matched = scan.indexOf(phrase) !== -1;
@@ -335,14 +346,26 @@ function conditionFromText(text) {
       wornHit = true;
     } else if (CONDITION_MAP[mapKey] === NORMALIZED_CONDITION.BRAND_NEW) {
       brandNewHit = true;
-      if (phrase !== 'new') brandNewPhraseHit = true;
     }
   }
 
   if (wornHit) return NORMALIZED_CONDITION.WORN;
-  if (brandNewHit) {
-    if (!brandNewPhraseHit && scan.indexOf('new balance') !== -1) return '';
-    return NORMALIZED_CONDITION.BRAND_NEW;
+  if (brandNewHit) return NORMALIZED_CONDITION.BRAND_NEW;
+
+  return '';
+}
+
+function conditionFromTags(tags) {
+  // Scan full tag string for CONDITION_MAP phrases, then each tag for exact
+  // bare "new" (e.g. tags "new, Restock").
+  if (!tags) return '';
+
+  var mapped = conditionFromText(tags);
+  if (mapped) return mapped;
+
+  var parts = tags.toString().split(',');
+  for (var i = 0; i < parts.length; i++) {
+    if (isBareNewToken(parts[i])) return NORMALIZED_CONDITION.BRAND_NEW;
   }
 
   return '';
@@ -360,22 +383,65 @@ function boxFromTags(tags) {
   return '';
 }
 
+function bodyPlainText(html) {
+  // Convert Body HTML to plain text with line breaks preserved.
+  if (!html) return '';
+  return html.toString()
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');
+}
+
 function bodyField(html, label) {
   // Read "Label: value" from Body regardless of wrapping tags
   // (e.g. <strong>Box:</strong> No Box or plain "Condition: Pre-Owned").
   if (!html || !label) return '';
 
-  var text = html.toString()
-    .replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&');
-
+  var text = bodyPlainText(html);
   var escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   var re = new RegExp('(?:^|\\n)\\s*' + escaped + ':\\s*([^\\n]+)', 'i');
   var match = text.match(re);
   return match ? match[1].trim() : '';
+}
+
+function descriptionHasOwnLineNew(html) {
+  // KCP Restock template puts a bare "new" on its own line after Released:
+  //   ...Released: …<br>new<br><br><ul>…
+  var text = bodyPlainText(html);
+  if (!text) return false;
+
+  var lines = text.split(/\n/);
+  for (var i = 0; i < lines.length; i++) {
+    if (isBareNewToken(lines[i])) return true;
+  }
+  return false;
+}
+
+function mapBodyCondition(html) {
+  // Body bare "new" → Brand New:
+  //   1) labeled Condition: New
+  //   2) else own-line "new"
+  // All other phrases use shared CONDITION_MAP via conditionFromText.
+  var labeled = bodyField(html, 'Condition');
+  if (labeled) {
+    var mapped = conditionFromText(labeled);
+    if (mapped) return mapped;
+    if (isBareNewToken(labeled)) return NORMALIZED_CONDITION.BRAND_NEW;
+    return '';
+  }
+  if (descriptionHasOwnLineNew(html)) return NORMALIZED_CONDITION.BRAND_NEW;
+  return '';
+}
+
+function mapMetafieldCondition(raw) {
+  // Metafield: CONDITION_MAP scan/exact, then exact bare "new".
+  var mapped = conditionFromText(raw);
+  if (mapped) return mapped;
+  if (isBareNewToken(raw)) return NORMALIZED_CONDITION.BRAND_NEW;
+  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -706,23 +772,23 @@ function parseKcpSizeOption(supplier, selectedOptions, product) {
 
 function resolveKcpCondition(product) {
   // KCP cascade when the Size option has no condition segment.
-  // Example: option "10.5M / 12W" with metafield "Pre-Owned" → Worn.
-  // Sources, first hit wins: metafield → Body "Condition:" → tags → type → title.
+  // Sources, first hit wins: metafield → Body → tags → type → title.
+  // Exact bare "new" is accepted on metafield, Body, tags, and option segments
+  // (mapConditionExact) — not on title/type free text.
   // No hit → empty string (unset), not an import error.
-  var sources = [
-    product.conditionMetafield,
-    bodyField(product.description, 'Condition'),
-    product.tags,
-    product.productType,
-    product.title
-  ];
+  var mapped = mapMetafieldCondition(product.conditionMetafield);
+  if (mapped) return mapped;
 
-  for (var i = 0; i < sources.length; i++) {
-    var mapped = conditionFromText(sources[i]);
-    if (mapped) return mapped;
-  }
+  mapped = mapBodyCondition(product.description);
+  if (mapped) return mapped;
 
-  return '';
+  mapped = conditionFromTags(product.tags);
+  if (mapped) return mapped;
+
+  mapped = conditionFromText(product.productType);
+  if (mapped) return mapped;
+
+  return conditionFromText(product.title) || '';
 }
 
 function resolveKcpBox(sizeText, product) {
