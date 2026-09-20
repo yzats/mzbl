@@ -20,7 +20,7 @@
  * problems are reported via importErrors instead.
  *
  * Outputs — derived:
- *   prefix                  e.g. "KCP"
+ *   supplierCode            e.g. "KCP"
  *   variantId               e.g. "4521987654321"
  *   newSku                  e.g. "KCP-4521987654321"
  *   normalizedMSize         e.g. "10.5", "12"  (empty if size failed)
@@ -38,10 +38,10 @@
  *                           "child-size,unknown-category" ("" if none)
  *   hasImportErrors         true | false
  *
- * Outputs — original (copied):
- *   originalSku             supplier variant SKU as-is
- *   originalTitle           product title as-is
- *   originalDescription     product description / Body HTML as-is
+ * Outputs — supplier (copied):
+ *   supplierSku             supplier variant SKU as-is
+ *   supplierTitle           product title as-is
+ *   supplierDescription     product description / Body HTML as-is
  *
  * importErrors may include: unknown-supplier, child-size, unknown-size,
  * inconsistent-size, unknown-condition, unknown-box, unknown-category.
@@ -154,8 +154,8 @@ export default function main(input) {
   // e.g., KCP-4521987654321
   var newSku = supplierCode + '-' + variantId;
 
-  // Capture the supplier's original SKU as-is for reference
-  var originalSku = productVariant.sku || '';
+  // Capture the supplier's SKU as-is for reference
+  var supplierSku = productVariant.sku || '';
 
   // Supplier parsing is isolated here so future suppliers can differ without
   // changing the output fields expected by the rest of the workflow.
@@ -167,8 +167,8 @@ export default function main(input) {
     : blankDetails();
 
   // Category is product-level; size/condition/box are variant-level metafields.
-  var originalTitle = product.title || '';
-  var originalDescription = product.description || '';
+  var supplierTitle = product.title || '';
+  var supplierDescription = product.description || '';
   var normalizedTitle = normalizeTitle(product.title || '', supplier);
   var normalizedCategory = normalizeCategory(product.category, product.productType);
   var normalizedCategoryGid = CATEGORY_GIDS[normalizedCategory] || '';
@@ -181,16 +181,16 @@ export default function main(input) {
 
   // Keep this return shape aligned with the Run code output schema in Shopify.
   return {
-    prefix: supplierCode,
+    supplierCode: supplierCode,
     variantId: variantId,
     newSku: newSku,
-    originalSku: originalSku,
+    supplierSku: supplierSku,
     normalizedMSize: parsedDetails.normalizedMSize.toString(),
     normalizedWSize: parsedDetails.normalizedWSize.toString(),
     normalizedCondition: parsedDetails.normalizedCondition,
     normalizedBox: parsedDetails.normalizedBox,
-    originalTitle: originalTitle,
-    originalDescription: originalDescription,
+    supplierTitle: supplierTitle,
+    supplierDescription: supplierDescription,
     normalizedTitle: normalizedTitle,
     normalizedDescription: normalizedDescription,
     normalizedCategory: normalizedCategory,

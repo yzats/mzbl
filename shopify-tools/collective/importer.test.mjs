@@ -16,9 +16,9 @@ describe('Shopify Importer Unit Tests', () => {
           product: { vendor: 'Kicks Collective PA' }
         }
       });
-      assert.equal(raw.prefix, 'KCP');
+      assert.equal(raw.supplierCode, 'KCP');
       assert.equal(raw.variantId, '4521987654321');
-      assert.equal(raw.originalSku, 'RAW-SKU-99');
+      assert.equal(raw.supplierSku, 'RAW-SKU-99');
       assert.equal(raw.newSku, 'KCP-4521987654321');
     });
 
@@ -30,10 +30,10 @@ describe('Shopify Importer Unit Tests', () => {
           product: { vendor: 'Unknown' }
         }
     });
-      assert.equal(unkSupplier.prefix, 'UNK');
+      assert.equal(unkSupplier.supplierCode, 'UNK');
       assert.equal(unkSupplier.variantId, '100');
       assert.equal(unkSupplier.newSku, 'UNK-100');
-      assert.equal(unkSupplier.originalSku, 'RAW-100');
+      assert.equal(unkSupplier.supplierSku, 'RAW-100');
       assert.ok(unkSupplier.importErrors.includes('unknown-supplier'));
     });
 
@@ -44,10 +44,10 @@ describe('Shopify Importer Unit Tests', () => {
           product: { vendor: 'Kicks Collective PA' }
         }
       });
-      assert.equal(missingId.prefix, 'KCP');
+      assert.equal(missingId.supplierCode, 'KCP');
       assert.equal(missingId.variantId, '');
       assert.equal(missingId.newSku, 'KCP-');
-      assert.equal(missingId.originalSku, 'RAW-NO-ID');
+      assert.equal(missingId.supplierSku, 'RAW-NO-ID');
     });
   });
   // ==========================================================================
@@ -480,7 +480,7 @@ describe('Shopify Importer Unit Tests', () => {
     it('safely handles empty/malformed inputs without throwing exceptions', () => {
       assert.doesNotThrow(() => {
         const res = main({});
-        assert.equal(res.prefix, 'UNK');
+        assert.equal(res.supplierCode, 'UNK');
         assert.equal(res.hasImportErrors, true);
         assert.ok(res.importErrors.includes('unknown-supplier'));
       });

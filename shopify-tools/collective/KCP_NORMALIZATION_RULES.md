@@ -12,8 +12,8 @@ How KCP **segments** option values and **cascades** product fields when a segmen
 
 | Field | Rule |
 |---|---|
-| `prefix` | Always `KCP` when vendor is Kicks Collective PA |
-| `originalSku` | Supplier variant SKU as-is |
+| `supplierCode` | Always `KCP` when vendor is Kicks Collective PA |
+| `supplierSku` | Supplier variant SKU as-is |
 | `newSku` | `KCP-{numericVariantId}` from Shopify GID |
 | Local CSV runner | Forces vendor to `Kicks Collective PA` regardless of brand in the export |
 
