@@ -43,8 +43,8 @@ Release Date: 2024-11-23
 
 ## Size → `normalizedMSize`, `normalizedWSize`
 
-1. Read the Size option value and parse it with the shared size parser. A trailing `(…)` note such as `(No Box)` is ignored.
-2. If parsing fails: `child-size`, `unknown-size` or `inconsistent-size` (shared rules), and both sizes stay empty. Condition, box and title are still read from Body.
+1. Read the Size option value and pass it to the shared `resolveSize`. A trailing `(…)` note such as `(No Box)` is ignored.
+2. On a size error (`child-size`, `unknown-size` or `inconsistent-size`, shared rules) both sizes stay empty. Condition, box and title are still read from Body.
 3. If Body has `Size:` and it parses to different M/W than the option → `size-mismatch`. Sizes still come from the option. An unparseable Body size is ignored, and the check is skipped when the option size already failed.
 
 No matching option (e.g. `Title` / `Default Title` on Draft placeholders) → `unknown-size`.
@@ -93,7 +93,7 @@ Read Body `Box Condition:` and map with shared `BOX_MAP`:
 | No Box | No Box |
 | Missing Lid | With Box - Missing Lid |
 
-- **No line or empty value:** empty, no error (New listings omit the line).
+- **No line or empty value:** no error (New listings omit the line). Brand New → With Box (shared default); otherwise empty.
 - **Unlisted value:** empty + `unknown-box`.
 
 ---

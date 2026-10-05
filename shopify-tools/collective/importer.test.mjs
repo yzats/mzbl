@@ -211,7 +211,7 @@ describe('Shopify Importer Unit Tests', () => {
     });
 
     it('flags child-size for youth/child patterns and unknown-size for other unparseable values', () => {
-      const childSizeInputs = ['3Y', '3Y / 4.5W', '2Y / 3.5W', '9C', 'Y / 1.5W', '13.5C'];
+      const childSizeInputs = ['3Y', '3Y / 4.5W', '2Y / 3.5W', '9C', 'Y / 1.5W', '13.5C', '3', '2.5', '3M', '4.5W', '3M / 4.5W', 'EU36'];
 
       for (const value of childSizeInputs) {
         const res = main(createInput('Size', value));
@@ -219,6 +219,12 @@ describe('Shopify Importer Unit Tests', () => {
         assert.equal(res.normalizedWSize, '');
         assert.ok(res.importErrors.includes('child-size'), `Expected child-size for ${value}`);
         assert.ok(!res.importErrors.includes('unknown-size'));
+      }
+
+      for (const value of ['3.5', '3.5M', '5W', '3.5Y', 'EU36.5']) {
+        const res = main(createInput('Size', value));
+        assert.equal(res.normalizedMSize, '3.5', `Expected MSize 3.5 for ${value}`);
+        assert.ok(!res.importErrors.includes('child-size'), `Unexpected child-size for ${value}`);
       }
 
       const unknownSizeInputs = [
@@ -403,16 +409,19 @@ describe('Shopify Importer Unit Tests', () => {
       }
     });
 
-    it('leaves box empty without an error when Box Condition is missing or empty', () => {
+    it('defaults missing or empty Box Condition to With Box for Brand New only', () => {
       const cases = [
-        { condition: 'New', box: null },
-        { condition: 'Lightly Worn', box: null },
-        { condition: 'New', box: '' }
+        { condition: 'New', box: null, expected: NORMALIZED_BOX.WITH_BOX },
+        { condition: 'New', box: '', expected: NORMALIZED_BOX.WITH_BOX },
+        { condition: 'New (Moma socks included)', box: null, expected: NORMALIZED_BOX.WITH_BOX },
+        { condition: 'Lightly Worn', box: null, expected: '' },
+        { condition: 'Pre-Owned', box: '', expected: '' },
+        { condition: null, box: null, expected: '' }
       ];
-      for (const opts of cases) {
-        const res = withBody(opts);
-        assert.equal(res.normalizedBox, '', `box for ${JSON.stringify(opts)}`);
-        assert.ok(!res.importErrors.includes('unknown-box'), `unknown-box for ${JSON.stringify(opts)}`);
+      for (const tc of cases) {
+        const res = withBody({ condition: tc.condition, box: tc.box });
+        assert.equal(res.normalizedBox, tc.expected, `box for ${JSON.stringify(tc)}`);
+        assert.ok(!res.importErrors.includes('unknown-box'), `unknown-box for ${JSON.stringify(tc)}`);
       }
 
       const newExplicitNoBox = withBody({ condition: 'New', box: 'No Box' });
@@ -423,6 +432,10 @@ describe('Shopify Importer Unit Tests', () => {
       const res = withBody({ box: 'Custom Acrylic Case' });
       assert.equal(res.normalizedBox, '');
       assert.ok(res.importErrors.includes('unknown-box'));
+
+      const newUnknown = withBody({ condition: 'New', box: 'Custom Acrylic Case' });
+      assert.equal(newUnknown.normalizedBox, '');
+      assert.ok(newUnknown.importErrors.includes('unknown-box'));
     });
 
     it('ignores box notes on the Size option and box tags', () => {
@@ -472,7 +485,7 @@ describe('Shopify Importer Unit Tests', () => {
       assert.equal(describeWith({ condition: 'Lightly Worn', box: 'Original Box' }), 'Worn (light wear), with box');
       assert.equal(describeWith({ condition: 'VNDS (no soles)', box: 'No Box' }), 'Worn (VNDS, no soles), no box');
       assert.equal(describeWith({ condition: 'Moderately Worn', box: 'Missing Lid' }), 'Worn (moderate wear), with box - missing lid');
-      assert.equal(describeWith({ condition: 'New', box: null }), 'Brand New');
+      assert.equal(describeWith({ condition: 'New', box: null }), 'Brand New, with box');
       assert.equal(describeWith({ condition: 'New', box: 'Original Box' }), 'Brand New, with box');
       assert.equal(describeWith({ condition: 'Pre-Owned', box: null }), 'Worn');
       assert.equal(describeWith({ condition: 'Lightly Worn', box: null }), 'Worn (light wear)');

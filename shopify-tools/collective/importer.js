@@ -8,7 +8,7 @@
  *
  * Shared across suppliers (see SHARED_NORMALIZATION.md):
  *   - BOX_MAP and Body "Label: value" reader
- *   - size parse / US·EU conversion / M↔W consistency
+ *   - size parse / US·EU conversion / M↔W consistency / min size → size errors
  *   - category → Sneakers, sneaker condition/box description
  *
  * Supplier-specific (see KCP_NORMALIZATION_RULES.md for KCP):
@@ -80,6 +80,10 @@ var NORMALIZED_CATEGORY = {
 
 var CATEGORY_GIDS = {};
 CATEGORY_GIDS[NORMALIZED_CATEGORY.SNEAKERS] = 'gid://shopify/TaxonomyCategory/aa-sneakers';
+
+// Smallest men's size we process; anything below is child-size
+// (3.5Y = men's 3.5 is the first youth size mapped onto adult sizing).
+var MIN_MENS_SIZE = 3.5;
 
 // Keys are normalized to lowercase before lookup.
 var BOX_MAP = {
@@ -176,6 +180,7 @@ export default function main(input) {
   var parsedDetails = supplier
     ? parseSupplierDetails(supplier, selectedOptions, body)
     : blankDetails();
+  parsedDetails.normalizedBox = defaultBox(parsedDetails);
 
   // Title = supplier-specific sanitized shoe name + shared size suffix.
   var shoeName = deriveShoeName(supplier, supplierTitle, body);
@@ -321,6 +326,14 @@ function mapBox(raw) {
   return BOX_MAP[normalizeKey(raw)] || '';
 }
 
+function defaultBox(details) {
+  // Brand New with no box specified → With Box. An unrecognised box value
+  // (boxError) stays empty so it is still reviewed.
+  if (details.normalizedBox || details.boxError) return details.normalizedBox;
+  if (details.normalizedCondition === NORMALIZED_CONDITION.BRAND_NEW) return NORMALIZED_BOX.WITH_BOX;
+  return '';
+}
+
 // ---------------------------------------------------------------------------
 // Shared: size parse / convert / consistency
 // ---------------------------------------------------------------------------
@@ -370,22 +383,39 @@ function parseSizeText(sizeText) {
   // women's = youth + 1.5 (or as written when a Y/W pair is present).
   // Below 3.5Y and child (C) sizes stay unparsed → child-size.
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*Y\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*W$/i);
-  if (match && parseFloat(match[1]) >= 3.5) {
+  if (match && parseFloat(match[1]) >= MIN_MENS_SIZE) {
     return { m: match[1], w: match[2], system: 'us' };
   }
 
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*W\s*\/\s*([0-9]+(?:\.[0-9]+)?)\s*Y$/i);
-  if (match && parseFloat(match[2]) >= 3.5) {
+  if (match && parseFloat(match[2]) >= MIN_MENS_SIZE) {
     return { m: match[2], w: match[1], system: 'us' };
   }
 
   match = text.match(/^([0-9]+(?:\.[0-9]+)?)\s*Y$/i);
-  if (match && parseFloat(match[1]) >= 3.5) {
+  if (match && parseFloat(match[1]) >= MIN_MENS_SIZE) {
     return { m: match[1], w: offsetUsSize(match[1], 1.5), system: 'us' };
   }
 
   // Unknown size format. The caller turns this into child-size or unknown-size.
   return { m: '', w: '' };
+}
+
+function resolveSize(sizeText) {
+  // Size token → normalized M/W plus a size error. Any error leaves both
+  // sizes empty. Examples:
+  //   "", "Default Title" → unknown-size
+  //   "3Y", "9C", "Y / 1.5W" → child-size
+  //   "14M/12.5W", "7Y / 1.5W" → inconsistent-size (US: W ≠ M+1.5)
+  //   "3", "3M", "4.5W" → child-size (below men's 3.5)
+  var sizes = parseSizeText(sizeText);
+  var sizeError = '';
+  if (!sizes.m && !sizes.w) sizeError = classifyUnparsedSize(sizeText);
+  else if (!sizesAreConsistent(sizes)) sizeError = 'inconsistent-size';
+  else if (isBelowMinSize(sizes)) sizeError = 'child-size';
+
+  if (sizeError) return { m: '', w: '', sizeError: sizeError };
+  return { m: sizes.m, w: sizes.w, sizeError: '' };
 }
 
 function offsetUsSize(sizeText, delta) {
@@ -404,6 +434,11 @@ function sizesAreConsistent(sizes) {
 
   var expectedDelta = sizes.system === 'eu' ? 2 : 1.5;
   return Math.abs((w - m) - expectedDelta) < 0.01;
+}
+
+function isBelowMinSize(sizes) {
+  // Any format that resolves under men's 3.5, e.g. "3", "3M", "4.5W", "EU36".
+  return parseFloat(sizes.m) < MIN_MENS_SIZE;
 }
 
 function sameSizes(a, b) {
@@ -576,22 +611,13 @@ function parseKcpBody(supplier, selectedOptions, body) {
   //   Release Date: 2017-02-11
   var sizeOption = findOption(selectedOptions, supplier.sizeOptionNames || ['Size']);
   var sizeText = sizeOption ? optionValueText(sizeOption.value) : '';
-  var sizes = parseSizeText(sizeText);
-
-  // Size errors leave sizes empty but do not stop condition/box. Examples:
-  //   no Size option, "Default Title" → unknown-size
-  //   "3Y", "9C", "Y / 1.5W" → child-size
-  //   "14M/12.5W", "7Y / 1.5W" → inconsistent-size (US: W ≠ M+1.5)
-  var sizeError = '';
-  if (!sizeOption) sizeError = 'unknown-size';
-  else if (!sizes.m && !sizes.w) sizeError = classifyUnparsedSize(sizeText);
-  else if (!sizesAreConsistent(sizes)) sizeError = 'inconsistent-size';
-  if (sizeError) sizes = { m: '', w: '' };
+  // Size errors leave sizes empty but do not stop condition/box.
+  var sizes = resolveSize(sizeText);
 
   // Body "Size:" is a cross-check only; unparseable Body sizes are ignored.
   var sizeCheckError = '';
   var bodySizes = parseSizeText(body.fields['size']);
-  if (!sizeError && (bodySizes.m || bodySizes.w) && !sameSizes(sizes, bodySizes)) {
+  if (!sizes.sizeError && (bodySizes.m || bodySizes.w) && !sameSizes(sizes, bodySizes)) {
     sizeCheckError = 'size-mismatch';
   }
 
@@ -599,12 +625,12 @@ function parseKcpBody(supplier, selectedOptions, body) {
   var box = resolveKcpBox(body.fields['box condition']);
 
   return {
-    normalizedMSize: sizes.m || '',
-    normalizedWSize: sizes.w || '',
+    normalizedMSize: sizes.m,
+    normalizedWSize: sizes.w,
     normalizedCondition: condition.normalizedCondition,
     normalizedConditionNote: condition.normalizedConditionNote,
     normalizedBox: box.normalizedBox,
-    sizeError: sizeError,
+    sizeError: sizes.sizeError,
     sizeCheckError: sizeCheckError,
     conditionError: condition.conditionError,
     boxError: box.boxError
@@ -639,7 +665,7 @@ function resolveKcpCondition(raw) {
 
 function resolveKcpBox(raw) {
   // Body "Box Condition:" → BOX_MAP. Missing or empty stays unset without an
-  // error (New listings omit the line).
+  // error (New listings omit the line; shared defaultBox fills in With Box).
   var value = (raw || '').trim();
   if (!value) return { normalizedBox: '', boxError: '' };
 

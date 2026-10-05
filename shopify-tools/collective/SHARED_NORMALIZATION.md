@@ -10,7 +10,7 @@ Canonical output strings are defined as `NORMALIZED_CONDITION`, `NORMALIZED_BOX`
 
 **Input:** a size *token* already extracted by the supplier parser (not the full option string).
 
-**Outputs:** `normalizedMSize` and `normalizedWSize` (US men’s / women’s as strings), plus an internal `system` of `us` or `eu`. Both empty when unparseable.
+**Outputs:** `resolveSize` returns `normalizedMSize` and `normalizedWSize` (US men’s / women’s as strings) plus a size error (`child-size`, `unknown-size`, `inconsistent-size`, or empty). Any error leaves both sizes empty. Supplier parsers only pick the size token and pass it in.
 
 ### Accepted patterns
 
@@ -28,10 +28,11 @@ Optional `Men's` / `Women's` spellings and an optional `US` prefix are allowed w
 
 ### Not accepted
 
-| Pattern | Error (when caller classifies) |
+| Pattern | Error |
 |---|---|
 | Youth **below 3.5Y** (`3Y`, `3Y / 4.5W`) or broken `Y / 1.5W` | `child-size` |
 | Child / PS (`9C`, `13.5C`) | `child-size` |
+| Any size that resolves **below men's 3.5** (`3`, `3M`, `4.5W`, `EU36`) | `child-size` |
 | Letter sizes, URL slugs, `Default Title`, other junk | `unknown-size` |
 
 ### M/W consistency
@@ -43,7 +44,7 @@ When both M and W are set, pairing must match the source system:
 | US (incl. youth→adult) | `W = M + 1.5` |
 | EU (`EU##` conversion) | `W = M + 2` |
 
-Otherwise callers typically clear both sizes and flag `inconsistent-size`.
+Otherwise both sizes are cleared and the error is `inconsistent-size`.
 
 ---
 
@@ -79,6 +80,10 @@ Splits product Body (HTML or plain text with newlines) into:
 | `replacement` / `replacement box` | Replacement Box |
 | `no box` | No Box |
 | `missing lid` | With Box - Missing Lid |
+
+### Default
+
+When the supplier gives no box value and the condition is Brand New, `normalizedBox` = With Box (`defaultBox`, applied after the supplier parser). An unrecognised box value (`unknown-box`) stays empty.
 
 ---
 
