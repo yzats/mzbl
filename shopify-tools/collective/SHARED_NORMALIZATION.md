@@ -1,6 +1,6 @@
 # Shared Normalization
 
-Common mappings and conversions used by all Collective suppliers in [`importer.js`](importer.js). Supplier-specific rules (how options are segmented, which fields to cascade) live in `{PREFIX}_NORMALIZATION_RULES.md` — e.g. [`KCP_NORMALIZATION_RULES.md`](KCP_NORMALIZATION_RULES.md).
+Common mappings and conversions used by all Collective suppliers in [`importer.js`](importer.js). Supplier-specific rules (which option holds size, which Body labels hold condition / box / title, condition vocabulary) live in `{PREFIX}_NORMALIZATION_RULES.md` — e.g. [`KCP_NORMALIZATION_RULES.md`](KCP_NORMALIZATION_RULES.md).
 
 Canonical output strings are defined as `NORMALIZED_CONDITION`, `NORMALIZED_BOX`, and `NORMALIZED_CATEGORY` in `importer.js` (e.g. `NORMALIZED_BOX.NO_BOX` → `"No Box"`). Maps and helpers use those constants.
 
@@ -47,53 +47,22 @@ Otherwise callers typically clear both sizes and flag `inconsistent-size`.
 
 ---
 
-## Condition map
+## Condition
 
-**Outputs:** `Brand New` | `Worn` | empty (unmapped).
+**Outputs:** `normalizedCondition` = `Brand New` | `Worn` | empty, plus `normalizedConditionNote` (lowercase detail, may be empty).
 
-### Exact `CONDITION_MAP`
+Condition vocabularies differ by supplier, so each supplier defines its own map (e.g. `KCP_CONDITION_MAP` — see [`KCP_NORMALIZATION_RULES.md`](KCP_NORMALIZATION_RULES.md)).
 
-| Raw (case-insensitive) | Normalized |
-|---|---|
-| `brand new` | Brand New |
-| `pre-owned` | Worn |
-| `worn` | Worn |
-| `used` | Worn |
-| `tried on` | Worn |
-| `vnds` | Worn |
-| `lightly worn` / `moderately worn` / `heavily worn` | Worn |
+---
 
-Bare `new` is **not** in this map. Exact whole-value `new` → Brand New via `isBareNewToken` for option segments, metafield, tags, and Body (`Condition: New` / own-line). Not for title/type free text.
+## Body reader (`parseBody`)
 
-### Text signals (`conditionFromText`)
+Splits product Body (HTML or plain text with newlines) into:
 
-Used when scanning free text (metafield, tags, type, title, and Body `Condition:` values other than bare `new`):
+- **`name`:** first non-empty line, unless that line is a `Label:` line.
+- **`fields`:** every `Label: value` line, keyed by lowercase label. First occurrence wins. An empty value stays empty (never borrows the next line).
 
-1. Exact `CONDITION_MAP` hit on the whole field.
-2. Else scan for any `CONDITION_MAP` phrase inside the text (`_` / `-` treated as spaces).  
-   Short keys `worn` / `used` require a word boundary.
-3. If any Worn phrase and any Brand New phrase both hit, **Worn wins**.
-
-### Exact bare `new` (`isBareNewToken`)
-
-Whole value is exactly `new` / `New` / `new.` → Brand New when read from:
-
-| Source | Helper |
-|---|---|
-| Option condition segment | `mapConditionExact` |
-| Metafield | `mapMetafieldCondition` |
-| Tags (per comma-separated tag) | `conditionFromTags` |
-| Body labeled `Condition:` or own-line | `mapBodyCondition` |
-
-Not applied to title or product type (avoids `NEW SIZE…`, `New Balance`, `New Year`).
-
-Exact option-segment mapping uses `mapConditionExact` (CONDITION_MAP + bare `new`) — no substring scan.
-
-### Body (`mapBodyCondition`)
-
-1. Labeled `Condition:` → `conditionFromText`, else if value is exactly `new` → Brand New.  
-2. Else if any whole line is exactly `new` → Brand New.  
-3. Else empty (cascade continues).
+`<br>`, `</p>`, `</li>`, `</div>` become line breaks; other tags are removed; common entities (`&amp;`, `&nbsp;`, …) are decoded.
 
 ---
 
@@ -105,11 +74,10 @@ Exact option-segment mapping uses `mapConditionExact` (CONDITION_MAP + bare `new
 
 | Raw (case-insensitive) | Normalized |
 |---|---|
-| `original box (good)` | With Box |
-| `original box (damaged)` | Damaged Box |
+| `good box` / `original box` | With Box |
 | `damaged box` | Damaged Box |
-| `replacement box` | Replacement Box |
-| `no box` / `no_box` / `special-no_box` | No Box |
+| `replacement` / `replacement box` | Replacement Box |
+| `no box` | No Box |
 | `missing lid` | With Box - Missing Lid |
 
 ---
@@ -122,6 +90,19 @@ Exact option-segment mapping uses `mapConditionExact` (CONDITION_MAP + bare `new
 | Product type in `PRODUCT_TYPE_MAP` | mapped value | same |
 | Else | empty | *(empty)* — callers may flag `unknown-category` |
 
+Suppliers with `categorySource: 'product-type'` (KCP) skip the category name and use Type only.
+
+---
+
+## Title
+
+`normalizedTitle` = sanitized shoe name + ` (Size {normalizedMSize})`.
+
+- **Shoe name:** supplier-specific (`deriveShoeName` dispatches on the supplier's `shoeName` strategy). It has no size and is already cleaned up, e.g. KCP removes `(Women's)`. Unknown suppliers use Title as-is.
+- **Size suffix:** shared (`buildNormalizedTitle`). Left off when size is unknown (the size error is flagged separately).
+
+Example: `Jordan 3 Cool Grey` + `10` → `Jordan 3 Cool Grey (Size 10)`.
+
 ---
 
 ## Description (by product type)
@@ -130,12 +111,19 @@ Format is shared across suppliers and chosen from `normalizedCategory` (not supp
 
 ### Sneakers
 
-| Condition | Box | Description |
-|---|---|---|
-| set | set | `{condition} ({box})` — e.g. `Worn (No Box)` |
-| set | empty | `{condition}` |
-| empty | set | `{box}` |
-| empty | empty | empty |
+`{condition} ({note}), {box in lowercase}` — any empty part (and its punctuation) is left out.
+
+| Condition | Note | Box | Description |
+|---|---|---|---|
+| Worn | light wear | With Box | `Worn (light wear), with box` |
+| Worn | VNDS, no soles | No Box | `Worn (VNDS, no soles), no box` |
+| Brand New | *(empty)* | With Box | `Brand New, with box` |
+| Worn | light wear | *(empty)* | `Worn (light wear)` |
+| Worn | *(empty)* | *(empty)* | `Worn` |
+| *(empty)* | *(empty)* | No Box | `no box` |
+| *(empty)* | *(empty)* | *(empty)* | empty |
+
+`normalizedBox` itself keeps its capitals; only the description lowercases it.
 
 ### Other categories
 

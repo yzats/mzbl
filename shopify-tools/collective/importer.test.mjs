@@ -2,6 +2,45 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import main, { NORMALIZED_CONDITION, NORMALIZED_BOX, NORMALIZED_CATEGORY } from './importer.js';
 
+const KCP = 'Kicks Collective PA';
+
+// Body in the KCP export template. Pass null to omit a line.
+function kcpBody({
+  name = 'Jordan 3 Retro OG Black Cement (2024)',
+  sku = 'DN3707-010',
+  size = null,
+  condition = 'Lightly Worn',
+  box = 'Original Box',
+  released = '2024-11-23'
+} = {}) {
+  const lines = [];
+  if (name !== null) lines.push(name);
+  if (sku !== null) lines.push(`SKU: ${sku}`);
+  if (size !== null) lines.push(`Size: ${size}`);
+  if (condition !== null) lines.push(`Condition: ${condition}`);
+  if (box !== null) lines.push(`Box Condition: ${box}`);
+  if (released !== null) lines.push(`Release Date: ${released}`);
+  lines.push('', 'All items are shipped out quickly with safe packaging.');
+  return lines.join('<br>');
+}
+
+function kcpInput(sizeValue, productExtras = {}) {
+  return {
+    productVariant: {
+      id: 'gid://shopify/ProductVariant/1',
+      sku: 'SKU-1',
+      selectedOptions: [{ name: 'Size', value: sizeValue }],
+      product: {
+        vendor: KCP,
+        title: 'Jordan 3 Retro OG Black Cement (2024) 12 (Pre-Owned)',
+        productType: 'Pre-Owned Sneakers',
+        descriptionHtml: kcpBody(),
+        ...productExtras
+      }
+    }
+  };
+}
+
 describe('Shopify Importer Unit Tests', () => {
 
   // ==========================================================================
@@ -13,7 +52,7 @@ describe('Shopify Importer Unit Tests', () => {
         productVariant: {
           id: 'gid://shopify/ProductVariant/4521987654321',
           sku: 'RAW-SKU-99',
-          product: { vendor: 'Kicks Collective PA' }
+          product: { vendor: KCP }
         }
       });
       assert.equal(raw.supplierCode, 'KCP');
@@ -24,24 +63,26 @@ describe('Shopify Importer Unit Tests', () => {
 
     it('falls back to UNK prefix and flags error for unconfigured suppliers', () => {
       const unkSupplier = main({
-      productVariant: {
+        productVariant: {
           id: 'gid://shopify/ProductVariant/100',
           sku: 'RAW-100',
-          product: { vendor: 'Unknown' }
+          product: { vendor: 'Unknown', title: 'Some Title' }
         }
-    });
+      });
       assert.equal(unkSupplier.supplierCode, 'UNK');
       assert.equal(unkSupplier.variantId, '100');
       assert.equal(unkSupplier.newSku, 'UNK-100');
       assert.equal(unkSupplier.supplierSku, 'RAW-100');
+      assert.equal(unkSupplier.normalizedTitle, 'Some Title');
       assert.ok(unkSupplier.importErrors.includes('unknown-supplier'));
+      assert.ok(!unkSupplier.importErrors.includes('unknown-title'));
     });
 
     it('handles missing productVariant id gracefully', () => {
       const missingId = main({
         productVariant: {
           sku: 'RAW-NO-ID',
-          product: { vendor: 'Kicks Collective PA' }
+          product: { vendor: KCP }
         }
       });
       assert.equal(missingId.supplierCode, 'KCP');
@@ -50,6 +91,7 @@ describe('Shopify Importer Unit Tests', () => {
       assert.equal(missingId.supplierSku, 'RAW-NO-ID');
     });
   });
+
   // ==========================================================================
   // 2. Category & Taxonomy Normalization
   // ==========================================================================
@@ -64,7 +106,7 @@ describe('Shopify Importer Unit Tests', () => {
       { category: 'Clothing', type: "Women's Shoes" },
       { category: 'Clothing', type: "Kid's Shoes" },
       { category: 'Clothing', type: "Toddler's" },
-      { category: 'Clothing', type: "Preschool" },
+      { category: 'Clothing', type: 'Preschool' },
       { category: 'Clothing', type: 'sneakers' },
       { category: 'Clothing', type: 'Pre-Owned Sneakers' }
     ];
@@ -93,44 +135,53 @@ describe('Shopify Importer Unit Tests', () => {
         });
         assert.equal(res.normalizedCategory, '', `Expected empty category for ${tc.category} / ${tc.type}`);
         assert.equal(res.normalizedCategoryGid, '');
-      assert.ok(res.importErrors.includes('unknown-category'));
+        assert.ok(res.importErrors.includes('unknown-category'));
       }
-      });
     });
+
+    it('uses only Type for KCP and ignores Product Category', () => {
+      const fromType = main(kcpInput('10.5M / 12W', { productType: 'sneakers', category: { name: 'Uncategorized' } }));
+      assert.equal(fromType.normalizedCategory, NORMALIZED_CATEGORY.SNEAKERS);
+
+      const categoryIgnored = main(kcpInput('10.5M / 12W', { productType: '', category: { name: 'Shoes' } }));
+      assert.equal(categoryIgnored.normalizedCategory, '');
+      assert.ok(categoryIgnored.importErrors.includes('unknown-category'));
+    });
+  });
 
   // ==========================================================================
   // 3. Option Matching & Size Text Parsing
   // ==========================================================================
   describe('Option Matching & Size Text Parsing', () => {
     const createInput = (optName, optVal) => ({
-        productVariant: {
+      productVariant: {
         sku: 'SKU-1',
         selectedOptions: [{ name: optName, value: optVal }],
-        product: { vendor: 'Kicks Collective PA', category: { name: 'Shoes' } }
-          }
+        product: { vendor: KCP, productType: 'sneakers', descriptionHtml: kcpBody() }
+      }
     });
 
     const validSizes = [
-      { input: '12.5M/14W - Brand New - No Box', m: '12.5', w: '14' },
-      { input: '14W/12.5M - Pre-Owned - No Box', m: '12.5', w: '14' },
-      { input: '10.5M - Brand New - With Box', m: '10.5', w: '12' },
-      { input: '8.5W - Pre-Owned - No Box', m: '7', w: '8.5' },
-      { input: 'US 10M / 11.5W - Brand New - No Box', m: '10', w: '11.5' },
-      { input: 'EU44 - Brand New', m: '11', w: '13' },
-      { input: 'EU 45 - Brand New', m: '12', w: '14' },
-      // Size-only options from newer KCP exports
+      { input: '12.5M/14W', m: '12.5', w: '14' },
+      { input: '14W/12.5M', m: '12.5', w: '14' },
+      { input: '10.5M', m: '10.5', w: '12' },
+      { input: '16M', m: '16', w: '17.5' },
+      { input: '8.5W', m: '7', w: '8.5' },
+      { input: 'US 10M / 11.5W', m: '10', w: '11.5' },
+      { input: 'EU44', m: '11', w: '13' },
+      { input: 'EU 45', m: '12', w: '14' },
       { input: '10.5M / 12W', m: '10.5', w: '12' },
       { input: '10.5', m: '10.5', w: '12' },
       { input: '11.5W', m: '10', w: '11.5' },
       { input: '12M / 13.5W (Missing Lid)', m: '12', w: '13.5' },
+      { input: '13 (Damaged Box)', m: '13', w: '14.5' },
       // Youth 3.5Y+ maps onto adult US sizing (M = Y, W = Y+1.5 or as written)
       { input: '3.5Y', m: '3.5', w: '5' },
       { input: '3.5Y / 5W', m: '3.5', w: '5' },
-      { input: '3.5Y - Pre-Owned - No Box', m: '3.5', w: '5' },
       { input: '4Y / 5.5W', m: '4', w: '5.5' },
       { input: '6.5Y / 8W', m: '6.5', w: '8' },
-      { input: '7Y', m: '7', w: '8.5' },
-      { input: '7Y - Pre-Owned - No Box', m: '7', w: '8.5' }
+      { input: '6.5Y (Replacement Box)', m: '6.5', w: '8' },
+      { input: '7Y', m: '7', w: '8.5' }
     ];
 
     it('successfully parses valid US Men\'s and Women\'s size patterns and EU sizes', () => {
@@ -142,25 +193,15 @@ describe('Shopify Importer Unit Tests', () => {
     });
 
     it('flags inconsistent-size when M/W pairing does not match US (+1.5) or EU (+2)', () => {
-      const inconsistent = [
-        '14M/12.5W',
-        '14M / 12.5W - Brand New - No Box',
-        '10.5M / 12.5W',
-        '7Y / 1.5W',
-        '3.5Y / 1.5W'
-      ];
+      const inconsistent = ['14M/12.5W', '10.5M / 12.5W', '7Y / 1.5W', '3.5Y / 1.5W'];
 
       for (const value of inconsistent) {
         const res = main(createInput('Size', value));
         assert.equal(res.normalizedMSize, '', `Expected empty M for ${value}`);
         assert.equal(res.normalizedWSize, '', `Expected empty W for ${value}`);
-        assert.equal(res.normalizedCondition, '');
-        assert.equal(res.normalizedBox, '');
         assert.ok(res.importErrors.includes('inconsistent-size'), `Expected inconsistent-size for ${value}`);
         assert.ok(!res.importErrors.includes('unknown-size'));
         assert.ok(!res.importErrors.includes('child-size'));
-        assert.ok(!res.importErrors.includes('unknown-condition'));
-        assert.ok(!res.importErrors.includes('unknown-box'));
       }
 
       const euOk = main(createInput('Size', 'EU45'));
@@ -170,29 +211,20 @@ describe('Shopify Importer Unit Tests', () => {
     });
 
     it('flags child-size for youth/child patterns and unknown-size for other unparseable values', () => {
-      const childSizeInputs = [
-        { name: 'Size', value: '3Y - Pre-Owned' },
-        { name: 'Size', value: '3Y / 4.5W' },
-        { name: 'Size', value: '9C - Brand New' },
-        { name: 'Size', value: 'Y / 1.5W' },
-        { name: 'Size', value: '13.5C' }
-      ];
+      const childSizeInputs = ['3Y', '3Y / 4.5W', '2Y / 3.5W', '9C', 'Y / 1.5W', '13.5C'];
 
-      for (const tc of childSizeInputs) {
-        const res = main(createInput(tc.name, tc.value));
+      for (const value of childSizeInputs) {
+        const res = main(createInput('Size', value));
         assert.equal(res.normalizedMSize, '');
         assert.equal(res.normalizedWSize, '');
-        assert.equal(res.normalizedCondition, '');
-        assert.equal(res.normalizedBox, '');
-        assert.ok(res.importErrors.includes('child-size'), `Expected child-size for ${tc.value}`);
+        assert.ok(res.importErrors.includes('child-size'), `Expected child-size for ${value}`);
         assert.ok(!res.importErrors.includes('unknown-size'));
-        assert.ok(!res.importErrors.includes('unknown-condition'));
-        assert.ok(!res.importErrors.includes('unknown-box'));
       }
 
       const unknownSizeInputs = [
         { name: 'Size', value: '10-5-m-11-5-w' },
         { name: 'Size', value: 'copyt:temporary:size' },
+        { name: 'Size', value: '10M - Brand New - No Box' },
         { name: 'Title', value: 'Default Title' }
       ];
 
@@ -200,281 +232,394 @@ describe('Shopify Importer Unit Tests', () => {
         const res = main(createInput(tc.name, tc.value));
         assert.equal(res.normalizedMSize, '');
         assert.equal(res.normalizedWSize, '');
-        assert.equal(res.normalizedCondition, '');
-        assert.equal(res.normalizedBox, '');
         assert.ok(res.importErrors.includes('unknown-size'), `Expected unknown-size for ${tc.value}`);
         assert.ok(!res.importErrors.includes('child-size'));
       }
     });
 
+    it('still reads condition, box, and title from Body when size fails', () => {
+      const failures = [
+        { option: '14M/12.5W', error: 'inconsistent-size' },
+        { option: '3Y', error: 'child-size' },
+        { option: 'Default Title', error: 'unknown-size' }
+      ];
+      for (const tc of failures) {
+        const res = main(kcpInput(tc.option, {
+          descriptionHtml: kcpBody({ name: 'Jordan 3 Cool Grey', size: '10M / 11.5W', condition: 'Lightly Worn', box: 'No Box' })
+        }));
+        assert.ok(res.importErrors.includes(tc.error), `${tc.error} for ${tc.option}`);
+        assert.equal(res.normalizedMSize, '');
+        assert.equal(res.normalizedCondition, NORMALIZED_CONDITION.WORN);
+        assert.equal(res.normalizedConditionNote, 'light wear');
+        assert.equal(res.normalizedBox, NORMALIZED_BOX.NO_BOX);
+        assert.equal(res.normalizedDescription, 'Worn (light wear), no box');
+        assert.equal(res.normalizedTitle, 'Jordan 3 Cool Grey');
+        assert.ok(!res.importErrors.includes('size-mismatch'), `size-mismatch for ${tc.option}`);
+      }
+
+      const noSizeOption = main({
+        productVariant: {
+          selectedOptions: [],
+          product: { vendor: KCP, productType: 'sneakers', descriptionHtml: kcpBody({ condition: 'New', box: null }) }
+        }
+      });
+      assert.ok(noSizeOption.importErrors.includes('unknown-size'));
+      assert.equal(noSizeOption.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+    });
+
     it('supports "Shoe size" and blank option name as Size option for KCP', () => {
-      const shoeSize = main(createInput('Shoe size', '10.5M/12W - Brand New - With Box'));
+      const shoeSize = main(createInput('Shoe size', '10.5M/12W'));
       assert.equal(shoeSize.normalizedMSize, '10.5');
       assert.equal(shoeSize.normalizedWSize, '12');
 
-      const blankOptName = main(createInput('', '10.5M/12W - Brand New - With Box'));
+      const blankOptName = main(createInput('', '10.5M/12W'));
       assert.equal(blankOptName.normalizedMSize, '10.5');
       assert.equal(blankOptName.normalizedWSize, '12');
     });
+
+    it('flags size-mismatch when Body Size disagrees with the Size option', () => {
+      const agree = [
+        { option: '10.5M / 12W', body: '10.5M / 12W' },
+        { option: '12M/13.5W', body: '12M / 13.5W' },
+        { option: '13 (Damaged Box)', body: '13' },
+        { option: '6.5Y (No Box)', body: '6.5Y' },
+        { option: '11.5W', body: '11.5W' }
+      ];
+      for (const tc of agree) {
+        const res = main(kcpInput(tc.option, { descriptionHtml: kcpBody({ size: tc.body }) }));
+        assert.ok(!res.importErrors.includes('size-mismatch'), `Unexpected size-mismatch for ${tc.option} vs ${tc.body}`);
+      }
+
+      const mismatch = main(kcpInput('10.5M / 12W', { descriptionHtml: kcpBody({ size: '11M / 12.5W' }) }));
+      assert.ok(mismatch.importErrors.includes('size-mismatch'));
+      assert.equal(mismatch.normalizedMSize, '10.5');
+      assert.equal(mismatch.normalizedWSize, '12');
+      assert.equal(mismatch.normalizedCondition, NORMALIZED_CONDITION.WORN);
+
+      const youthVsAdult = main(kcpInput('7Y / 8.5W', { descriptionHtml: kcpBody({ size: '7' }) }));
+      assert.ok(!youthVsAdult.importErrors.includes('size-mismatch'));
+
+      const unparseableBody = main(kcpInput('10.5M / 12W', { descriptionHtml: kcpBody({ size: 'see photos' }) }));
+      assert.ok(!unparseableBody.importErrors.includes('size-mismatch'));
+
+      const noBodySize = main(kcpInput('10.5M / 12W'));
+      assert.ok(!noBodySize.importErrors.includes('size-mismatch'));
+    });
   });
 
   // ==========================================================================
-  // 4. Condition & Box Condition Mapping
+  // 4. Condition & Box Condition (Body)
   // ==========================================================================
   describe('Condition & Box Mapping', () => {
-    const createInput = (optVal, productExtras = {}) => ({
-      productVariant: {
-        sku: 'SKU-1',
-        selectedOptions: [{ name: 'Size', value: optVal }],
-        product: {
-          vendor: 'Kicks Collective PA',
-          category: { name: 'Shoes' },
-          ...productExtras
-        }
+    const withBody = (bodyOpts, extras = {}) =>
+      main(kcpInput('10.5M / 12W', { descriptionHtml: kcpBody(bodyOpts), ...extras }));
+
+    it('maps each KCP condition value to condition + note', () => {
+      const cases = [
+        { input: 'New', cond: NORMALIZED_CONDITION.BRAND_NEW, note: '' },
+        { input: 'Pre-Owned', cond: NORMALIZED_CONDITION.WORN, note: '' },
+        { input: 'Tried On', cond: NORMALIZED_CONDITION.WORN, note: 'tried on' },
+        { input: 'VNDS', cond: NORMALIZED_CONDITION.WORN, note: 'VNDS' },
+        { input: 'Lightly Worn', cond: NORMALIZED_CONDITION.WORN, note: 'light wear' },
+        { input: 'Moderately Worn', cond: NORMALIZED_CONDITION.WORN, note: 'moderate wear' },
+        { input: 'Heavily Worn', cond: NORMALIZED_CONDITION.WORN, note: 'heavy wear' },
+        { input: 'lightly worn', cond: NORMALIZED_CONDITION.WORN, note: 'light wear' }
+      ];
+      for (const tc of cases) {
+        const res = withBody({ condition: tc.input });
+        assert.equal(res.normalizedCondition, tc.cond, `condition for ${tc.input}`);
+        assert.equal(res.normalizedConditionNote, tc.note, `note for ${tc.input}`);
+        assert.ok(!res.importErrors.includes('unknown-condition'));
       }
     });
 
-    const validMappings = [
-      { input: '10M - Brand New - Original Box (Good)', cond: NORMALIZED_CONDITION.BRAND_NEW, box: NORMALIZED_BOX.WITH_BOX },
-      { input: '10M - Pre-Owned - Original Box (Damaged)', cond: NORMALIZED_CONDITION.WORN, box: NORMALIZED_BOX.DAMAGED_BOX },
-      { input: '10M - Pre-Owned - Replacement Box', cond: NORMALIZED_CONDITION.WORN, box: NORMALIZED_BOX.REPLACEMENT_BOX },
-      { input: '10M - Pre-Owned - No Box', cond: NORMALIZED_CONDITION.WORN, box: NORMALIZED_BOX.NO_BOX },
-
-      { input: '9M/10.5W - Brand New - Missing Lid', cond: NORMALIZED_CONDITION.BRAND_NEW, box: NORMALIZED_BOX.WITH_BOX_MISSING_LID },
-      { input: '10M - Brand New', cond: NORMALIZED_CONDITION.BRAND_NEW, box: '', desc: NORMALIZED_CONDITION.BRAND_NEW } // No box signal → unset
-    ];
-
-    it('successfully maps expected condition and box combinations', () => {
-      for (const tc of validMappings) {
-        const res = main(createInput(tc.input));
-        assert.equal(res.normalizedCondition, tc.cond);
-        assert.equal(res.normalizedBox, tc.box);
-        const expectedDesc = tc.desc || `${tc.cond} (${tc.box})`;
-        assert.equal(res.normalizedDescription, expectedDesc);
+    it('appends bracketed notes, lowercased, keeping VNDS capitalized', () => {
+      const cases = [
+        { input: 'VNDS (no soles)', cond: NORMALIZED_CONDITION.WORN, note: 'VNDS, no soles' },
+        { input: 'Moderately Worn (yellowing on the soles)', cond: NORMALIZED_CONDITION.WORN, note: 'moderate wear, yellowing on the soles' },
+        { input: 'Lightly Worn (Nike ID in a beautiful colorway)', cond: NORMALIZED_CONDITION.WORN, note: 'light wear, nike id in a beautiful colorway' },
+        { input: 'Pre-Owned (No Insoles)', cond: NORMALIZED_CONDITION.WORN, note: 'no insoles' },
+        { input: 'New (Moma socks included)', cond: NORMALIZED_CONDITION.BRAND_NEW, note: 'moma socks included' }
+      ];
+      for (const tc of cases) {
+        const res = withBody({ condition: tc.input });
+        assert.equal(res.normalizedCondition, tc.cond, `condition for ${tc.input}`);
+        assert.equal(res.normalizedConditionNote, tc.note, `note for ${tc.input}`);
       }
     });
 
-    it('resolves size-only condition via metafield, Body, tags, type, or title cascade', () => {
-      const fromMf = main(createInput('10.5M / 12W', { conditionMetafield: 'Pre-Owned' }));
-      assert.equal(fromMf.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromBody = main(createInput('10.5M / 12W', {
-        description: 'Condition: Moderately Worn\nBox: No Box\nSKU: DC1060-100'
-      }));
-      assert.equal(fromBody.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromBodyTriedOn = main(createInput('10.5M / 12W', {
-        description: '<p>Condition: Tried On</p><p>Box: No Box</p>'
-      }));
-      assert.equal(fromBodyTriedOn.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromBodyVnds = main(createInput('10.5M / 12W', {
-        description: 'Condition: VNDS'
-      }));
-      assert.equal(fromBodyVnds.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromBodyNotSpecified = main(createInput('10.5M / 12W', {
-        description: 'Condition: Not Specified'
-      }));
-      assert.equal(fromBodyNotSpecified.normalizedCondition, '');
-      assert.ok(!fromBodyNotSpecified.importErrors.includes('unknown-condition'));
-
-      const fromTagsBn = main(createInput('10.5M / 12W', { tags: 'Brand New, COPYT, store-owned' }));
-      assert.equal(fromTagsBn.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-
-      const fromType = main(createInput('10.5', { productType: 'Pre-Owned Sneakers' }));
-      assert.equal(fromType.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromTitlePo = main(createInput('11.5W', {
-        title: 'Jordan 1 Retro Low OG SP Travis Scott Olive Size 11.5W (Pre-Owned)'
-      }));
-      assert.equal(fromTitlePo.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromTitleBn = main(createInput('10.5M / 12W', {
-        title: 'Jordan 1 Retro High OG Brand New Sample'
-      }));
-      assert.equal(fromTitleBn.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-
-      const fromTitleWorn = main(createInput('10', {
-        title: 'Nike Dunk Low Size 10 (Moderately Worn Pre-Owned)'
-      }));
-      assert.equal(fromTitleWorn.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromTitleNew = main(createInput('9.5', {
-        title: 'NEW SIZE 9.5 - Nike Dunk Low Retro Premium Philly'
-      }));
-      assert.equal(fromTitleNew.normalizedCondition, '');
-
-      const fromTitleUsed = main(createInput('10', {
-        title: 'Jordan 1 Retro High Used Size 10'
-      }));
-      assert.equal(fromTitleUsed.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const fromBodyNew = main(createInput('10.5M / 12W', {
-        description: 'Condition: New'
-      }));
-      assert.equal(fromBodyNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-
-      const fromOwnLineNew = main(createInput('10.5M / 12W', {
-        description: 'SKU: ABC<br>Released: date_format(2013-03-29, "MM/DD/YYYY")<br>new<br><br><ul><li>100% Authentic</li></ul>'
-      }));
-      assert.equal(fromOwnLineNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-
-      const ownLineNewIgnoredIfLabeled = main(createInput('10.5M / 12W', {
-        description: 'Condition: Not Specified<br>new<br>'
-      }));
-      assert.equal(ownLineNewIgnoredIfLabeled.normalizedCondition, '');
-
-      const fromTagsNewOnly = main(createInput('10.5M / 12W', { tags: 'new, Restock' }));
-      assert.equal(fromTagsNewOnly.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-
-      const fromMfNew = main(createInput('10.5M / 12W', { conditionMetafield: 'New' }));
-      assert.equal(fromMfNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-
-      const fromOptionNew = main(createInput('10M - New - No Box'));
-      assert.equal(fromOptionNew.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-      assert.equal(fromOptionNew.normalizedBox, NORMALIZED_BOX.NO_BOX);
-
-      const fromMfWorn = main(createInput('10.5M / 12W', { conditionMetafield: NORMALIZED_CONDITION.WORN }));
-      assert.equal(fromMfWorn.normalizedCondition, NORMALIZED_CONDITION.WORN);
-
-      const newBalanceIgnored = main(createInput('10.5M / 12W', {
-        title: 'New Balance 990v3 Made In USA Boston Marathon'
-      }));
-      assert.equal(newBalanceIgnored.normalizedCondition, '');
-      assert.ok(!newBalanceIgnored.importErrors.includes('unknown-condition'));
+    it('flags unknown-condition for missing, empty, or unlisted Body condition', () => {
+      const cases = [
+        { condition: null },
+        { condition: '' },
+        { condition: 'Refurbished' },
+        { condition: 'Refurbished (new laces)' },
+        { condition: 'Brand New' }
+      ];
+      for (const opts of cases) {
+        const res = withBody(opts);
+        assert.equal(res.normalizedCondition, '', `condition for ${JSON.stringify(opts)}`);
+        assert.equal(res.normalizedConditionNote, '', `note for ${JSON.stringify(opts)}`);
+        assert.ok(res.importErrors.includes('unknown-condition'), `unknown-condition for ${JSON.stringify(opts)}`);
+      }
     });
 
-    it('does not treat standalone new in title or non-own-line body as Brand New', () => {
-      const titleNewSize = main(createInput('9.5', {
-        title: 'NEW SIZE 9.5 - Nike Dunk Low Retro Premium Philly'
-      }));
-      assert.equal(titleNewSize.normalizedCondition, '');
-
-      const titleNewYear = main(createInput('10.5M / 12W', {
-        title: 'Jordan 6 Retro Low GC Lunar New Year (2022)'
-      }));
-      assert.equal(titleNewYear.normalizedCondition, '');
-
-      const titleNewBalance = main(createInput('10.5M / 12W', {
-        title: 'New Balance 990v3 Made In USA Boston Marathon'
-      }));
-      assert.equal(titleNewBalance.normalizedCondition, '');
-
-      const bodyNewBalance = main(createInput('10.5M / 12W', {
-        description: 'New Balance 1906R White Black Metallic<br>SKU: U1906RCI<br>'
-      }));
-      assert.equal(bodyNewBalance.normalizedCondition, '');
-
-      const bodyMidLineNew = main(createInput('10.5M / 12W', {
-        description: 'Colorway: Navy/New Grey<br>Released: date_format(2024-01-01, "MM/DD/YYYY")<br>'
-      }));
-      assert.equal(bodyMidLineNew.normalizedCondition, '');
-
-      const bodyProseNew = main(createInput('10.5M / 12W', {
-        description: '<p>Ships quickly with new laces and safe packaging.</p>'
-      }));
-      assert.equal(bodyProseNew.normalizedCondition, '');
-
-      const bodyListItemNew = main(createInput('10.5M / 12W', {
-        description: '<ul><li>100% Authentic</li><li>new style release</li></ul>'
-      }));
-      assert.equal(bodyListItemNew.normalizedCondition, '');
-
-      const bodyNewNotOwnLine = main(createInput('10.5M / 12W', {
-        description: 'SKU: ABC new Released: 2024<br>'
-      }));
-      assert.equal(bodyNewNotOwnLine.normalizedCondition, '');
-    });
-
-    it('prefers option condition segment over product metafield', () => {
-      const res = main(createInput('10M - Brand New', { conditionMetafield: 'Pre-Owned' }));
-      assert.equal(res.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-    });
-
-    it('prefers metafield condition over Body Condition field', () => {
-      const res = main(createInput('10.5M / 12W', {
-        conditionMetafield: NORMALIZED_CONDITION.BRAND_NEW,
-        description: 'Condition: Pre-Owned'
-      }));
-      assert.equal(res.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
-    });
-
-    it('leaves condition unset (no error) when there is no condition signal', () => {
-      const noSignals = main(createInput('10.5M / 12W'));
-      assert.equal(noSignals.normalizedCondition, '');
-      assert.equal(noSignals.normalizedBox, '');
-      assert.ok(!noSignals.importErrors.includes('unknown-condition'));
-      assert.equal(noSignals.normalizedDescription, '');
-    });
-
-    it('flags unknown-condition or unknown-box errors when mappings are unexpected', () => {
-      const unknownCondition = main(createInput('10M - Refurbished - No Box'));
-      assert.equal(unknownCondition.normalizedCondition, '');
-      assert.ok(unknownCondition.importErrors.includes('unknown-condition'));
-
-      const unknownBox = main(createInput('10M - Brand New - Custom Acrylic Case'));
-      assert.equal(unknownBox.normalizedBox, '');
-      assert.ok(unknownBox.importErrors.includes('unknown-box'));
-    });
-
-    it('resolves size-only box via paren, tags, or Body Box: field', () => {
-      const fromParen = main(createInput('12M / 13.5W (Missing Lid)'));
-      assert.equal(fromParen.normalizedBox, NORMALIZED_BOX.WITH_BOX_MISSING_LID);
-
-      const fromTags = main(createInput('10.5M / 12W', { tags: 'no_box' }));
-      assert.equal(fromTags.normalizedBox, NORMALIZED_BOX.NO_BOX);
-
-      const fromSpecialTag = main(createInput('10.5M / 12W', { tags: 'special-no_box' }));
-      assert.equal(fromSpecialTag.normalizedBox, NORMALIZED_BOX.NO_BOX);
-
-      const fromBodyStrong = main(createInput('12M / 13.5W', {
-        description: '<p><strong>Condition:</strong> Moderately Worn</p>\n<p><strong>Box:</strong> No Box</p>'
-      }));
-      assert.equal(fromBodyStrong.normalizedBox, NORMALIZED_BOX.NO_BOX);
-
-      const fromBodyPlain = main(createInput('12M / 13.5W', {
-        description: 'Condition: Moderately Worn\nBox: No Box\nSKU: DC1060-100'
-      }));
-      assert.equal(fromBodyPlain.normalizedBox, NORMALIZED_BOX.NO_BOX);
-
-      const fromBodyReplacement = main(createInput('11.5M / 13W', {
-        description: '<p>Box: Replacement Box</p>'
-      }));
-      assert.equal(fromBodyReplacement.normalizedBox, NORMALIZED_BOX.REPLACEMENT_BOX);
-
-      const fromBodyDamaged = main(createInput('10M / 11.5W', {
-        description: 'Box: Damaged Box'
-      }));
-      assert.equal(fromBodyDamaged.normalizedBox, NORMALIZED_BOX.DAMAGED_BOX);
-
-      // Free-form Body prose without a Box: label is ignored.
-      const proseIgnored = main(createInput('10.5M / 12W', {
-        description: '<p>These shoes come with no box included.</p>'
-      }));
-      assert.equal(proseIgnored.normalizedBox, '');
-    });
-
-    it('prefers option box segment over Body and tags', () => {
-      const res = main(createInput('10M - Brand New - Original Box (Good)', {
-        tags: 'no_box',
-        description: '<p><strong>Box:</strong> No Box</p>'
-      }));
+    it('does not read the next line when the Condition value is empty', () => {
+      const res = withBody({ condition: '', box: 'Original Box' });
+      assert.equal(res.normalizedCondition, '');
       assert.equal(res.normalizedBox, NORMALIZED_BOX.WITH_BOX);
+      assert.ok(res.importErrors.includes('unknown-condition'));
     });
 
+    it('ignores Type, tags, metafield, and Title for condition', () => {
+      const newTypedPreOwned = withBody({ condition: 'New', box: null }, {
+        productType: 'Pre-Owned Sneakers',
+        title: 'Nike Air Max 90 Recraft Rose 10 (Pre-Owned)',
+        tags: 'pre-owned, lightly_worn',
+        conditionMetafield: 'Pre-Owned'
+      });
+      assert.equal(newTypedPreOwned.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW);
+
+      const noBodyCondition = withBody({ condition: null }, { tags: 'lightly_worn', conditionMetafield: 'Pre-Owned' });
+      assert.equal(noBodyCondition.normalizedCondition, '');
+      assert.ok(noBodyCondition.importErrors.includes('unknown-condition'));
+    });
+
+    it('maps KCP box values', () => {
+      const cases = [
+        { input: 'Good Box', box: NORMALIZED_BOX.WITH_BOX },
+        { input: 'Original Box', box: NORMALIZED_BOX.WITH_BOX },
+        { input: 'Damaged Box', box: NORMALIZED_BOX.DAMAGED_BOX },
+        { input: 'Replacement', box: NORMALIZED_BOX.REPLACEMENT_BOX },
+        { input: 'Replacement Box', box: NORMALIZED_BOX.REPLACEMENT_BOX },
+        { input: 'No Box', box: NORMALIZED_BOX.NO_BOX },
+        { input: 'Missing Lid', box: NORMALIZED_BOX.WITH_BOX_MISSING_LID },
+        { input: 'original box', box: NORMALIZED_BOX.WITH_BOX }
+      ];
+      for (const tc of cases) {
+        const res = withBody({ box: tc.input });
+        assert.equal(res.normalizedBox, tc.box, `box for ${tc.input}`);
+        assert.ok(!res.importErrors.includes('unknown-box'));
+      }
+    });
+
+    it('leaves box empty without an error when Box Condition is missing or empty', () => {
+      const cases = [
+        { condition: 'New', box: null },
+        { condition: 'Lightly Worn', box: null },
+        { condition: 'New', box: '' }
+      ];
+      for (const opts of cases) {
+        const res = withBody(opts);
+        assert.equal(res.normalizedBox, '', `box for ${JSON.stringify(opts)}`);
+        assert.ok(!res.importErrors.includes('unknown-box'), `unknown-box for ${JSON.stringify(opts)}`);
+      }
+
+      const newExplicitNoBox = withBody({ condition: 'New', box: 'No Box' });
+      assert.equal(newExplicitNoBox.normalizedBox, NORMALIZED_BOX.NO_BOX);
+    });
+
+    it('flags unknown-box for unlisted Box Condition values', () => {
+      const res = withBody({ box: 'Custom Acrylic Case' });
+      assert.equal(res.normalizedBox, '');
+      assert.ok(res.importErrors.includes('unknown-box'));
+    });
+
+    it('ignores box notes on the Size option and box tags', () => {
+      const res = main(kcpInput('9 (No Box)', {
+        descriptionHtml: kcpBody({ size: '9', box: 'Damaged Box' }),
+        tags: 'special-no_box'
+      }));
+      assert.equal(res.normalizedBox, NORMALIZED_BOX.DAMAGED_BOX);
+    });
+
+    it('reads Body from plain text with newlines and from wrapped HTML', () => {
+      const plain = main(kcpInput('10.5M / 12W', {
+        descriptionHtml: 'Nike Dunk Low\nSKU: X\nCondition: Moderately Worn\nBox Condition: No Box'
+      }));
+      assert.equal(plain.normalizedCondition, NORMALIZED_CONDITION.WORN);
+      assert.equal(plain.normalizedBox, NORMALIZED_BOX.NO_BOX);
+      assert.equal(plain.normalizedTitle, 'Nike Dunk Low (Size 10.5)');
+
+      const wrapped = main(kcpInput('10.5M / 12W', {
+        descriptionHtml: '<p>Nike Dunk Low</p><p><strong>Condition:</strong> Tried On</p><p><strong>Box Condition:</strong> Replacement Box</p>'
+      }));
+      assert.equal(wrapped.normalizedConditionNote, 'tried on');
+      assert.equal(wrapped.normalizedBox, NORMALIZED_BOX.REPLACEMENT_BOX);
+      assert.equal(wrapped.normalizedTitle, 'Nike Dunk Low (Size 10.5)');
+    });
+
+    it('reads only descriptionHtml, not description', () => {
+      const result = main(kcpInput('10.5M / 12W', {
+        descriptionHtml: undefined,
+        description: kcpBody({ condition: 'VNDS' })
+      }));
+      assert.equal(result.supplierDescription, '');
+      assert.equal(result.normalizedCondition, '');
+      assert.ok(result.importErrors.includes('unknown-condition'));
+      assert.ok(result.importErrors.includes('unknown-title'));
+    });
   });
 
   // ==========================================================================
-  // 5. Title Normalization & Defensive Fallbacks
+  // 5. Description
+  // ==========================================================================
+  describe('Description', () => {
+    const describeWith = (bodyOpts) =>
+      main(kcpInput('10.5M / 12W', { descriptionHtml: kcpBody(bodyOpts) })).normalizedDescription;
+
+    it('builds "Condition (note), box" with lowercase box', () => {
+      assert.equal(describeWith({ condition: 'Lightly Worn', box: 'Original Box' }), 'Worn (light wear), with box');
+      assert.equal(describeWith({ condition: 'VNDS (no soles)', box: 'No Box' }), 'Worn (VNDS, no soles), no box');
+      assert.equal(describeWith({ condition: 'Moderately Worn', box: 'Missing Lid' }), 'Worn (moderate wear), with box - missing lid');
+      assert.equal(describeWith({ condition: 'New', box: null }), 'Brand New');
+      assert.equal(describeWith({ condition: 'New', box: 'Original Box' }), 'Brand New, with box');
+      assert.equal(describeWith({ condition: 'Pre-Owned', box: null }), 'Worn');
+      assert.equal(describeWith({ condition: 'Lightly Worn', box: null }), 'Worn (light wear)');
+      assert.equal(describeWith({ condition: '', box: 'No Box' }), 'no box');
+      assert.equal(describeWith({ condition: null, box: null }), '');
+    });
+
+    it('keeps normalizedBox capitalized', () => {
+      const res = main(kcpInput('10.5M / 12W', { descriptionHtml: kcpBody({ box: 'No Box' }) }));
+      assert.equal(res.normalizedBox, 'No Box');
+    });
+  });
+
+  // ==========================================================================
+  // 6. Title & Defensive Fallbacks
   // ==========================================================================
   describe('Title Normalization & General Robustness', () => {
-    it('applies supplier title formatting strategy correctly', () => {
-      const lower = main({ productVariant: { product: { vendor: 'Kicks Collective PA', title: 'jordan 1 retro high og sp' } } });
-      assert.equal(lower.normalizedTitle, 'Jordan 1 Retro High Og Sp');
+    it('takes normalizedTitle from the Body name line with casing as written', () => {
+      const res = main(kcpInput('10.5M / 12W', {
+        title: "Nike Air Force 1 Low '07 Off-White MoMA 10.5 (Pre-Owned)",
+        descriptionHtml: kcpBody({ name: "Nike Air Force 1 Low '07 Off-White MoMA" })
+      }));
+      assert.equal(res.normalizedTitle, "Nike Air Force 1 Low '07 Off-White MoMA (Size 10.5)");
+      assert.ok(!res.importErrors.includes('title-mismatch'));
 
-      const upper = main({ productVariant: { product: { vendor: 'Kicks Collective PA', title: 'Jordan 1 Retro High OG SP' } } });
-      assert.equal(upper.normalizedTitle, 'Jordan 1 Retro High OG SP');
+      const lowerBrand = main(kcpInput('10.5M / 12W', {
+        title: 'adidas Yeezy Boost 350 V2 Black Red 10.5 (Pre-Owned)',
+        descriptionHtml: kcpBody({ name: 'adidas Yeezy Boost 350 V2 Black Red' })
+      }));
+      assert.equal(lowerBrand.normalizedTitle, 'adidas Yeezy Boost 350 V2 Black Red (Size 10.5)');
+    });
+
+    it('appends the men\'s size to normalizedTitle', () => {
+      const cases = [
+        { option: '10M / 11.5W', title: 'Jordan 3 Cool Grey (Size 10)' },
+        { option: '11.5W', title: 'Jordan 3 Cool Grey (Size 10)' },
+        { option: '6.5Y / 8W', title: 'Jordan 3 Cool Grey (Size 6.5)' },
+        { option: '13 (Damaged Box)', title: 'Jordan 3 Cool Grey (Size 13)' },
+        { option: 'EU44', title: 'Jordan 3 Cool Grey (Size 11)' }
+      ];
+      for (const tc of cases) {
+        const res = main(kcpInput(tc.option, {
+          title: 'Jordan 3 Cool Grey',
+          descriptionHtml: kcpBody({ name: 'Jordan 3 Cool Grey' })
+        }));
+        assert.equal(res.normalizedTitle, tc.title, `title for ${tc.option}`);
+      }
+
+      const womens = main(kcpInput('11.5W', {
+        title: "Jordan 4 Retro Seafoam (Women's) 11.5W (Pre-Owned)",
+        descriptionHtml: kcpBody({ name: "Jordan 4 Retro Seafoam (Women's)" })
+      }));
+      assert.equal(womens.normalizedTitle, 'Jordan 4 Retro Seafoam (Size 10)');
+      assert.ok(!womens.importErrors.includes('title-mismatch'));
+
+      const noSize = main(kcpInput('Default Title', {
+        title: 'Jordan 3 Cool Grey',
+        descriptionHtml: kcpBody({ name: 'Jordan 3 Cool Grey' })
+      }));
+      assert.equal(noSize.normalizedTitle, 'Jordan 3 Cool Grey');
+      assert.ok(noSize.importErrors.includes('unknown-size'));
+    });
+
+    it("removes women's qualifiers from normalizedTitle and keeps other brackets", () => {
+      const cases = [
+        { name: "Jordan 1 Retro High OG Seafoam (Women's)", title: 'Jordan 1 Retro High OG Seafoam (Size 10.5)' },
+        { name: 'Jordan 1 Retro High OG Seafoam (Women’s)', title: 'Jordan 1 Retro High OG Seafoam (Size 10.5)' },
+        { name: 'Nike Dunk Low (Womens)', title: 'Nike Dunk Low (Size 10.5)' },
+        { name: 'Nike Dunk Low (Women)', title: 'Nike Dunk Low (Size 10.5)' },
+        { name: 'Nike Dunk Low (WMNS)', title: 'Nike Dunk Low (Size 10.5)' },
+        { name: 'Nike Dunk Low (W)', title: 'Nike Dunk Low (Size 10.5)' },
+        { name: "Nike Dunk Low (Women's) Panda", title: 'Nike Dunk Low Panda (Size 10.5)' },
+        { name: "Nike Dunk Low (Men's)", title: "Nike Dunk Low (Men's) (Size 10.5)" },
+        { name: 'Jordan 6 Retro Wheat (GS)', title: 'Jordan 6 Retro Wheat (GS) (Size 10.5)' },
+        { name: 'Jordan 6 Retro Wheat (PS)', title: 'Jordan 6 Retro Wheat (PS) (Size 10.5)' },
+        { name: 'Jordan 6 Retro Wheat (TD)', title: 'Jordan 6 Retro Wheat (TD) (Size 10.5)' },
+        { name: 'Jordan 6 Retro Wheat (Kids)', title: 'Jordan 6 Retro Wheat (Kids) (Size 10.5)' },
+        { name: "Nike Air Force 1 Low '07 Off-White MoMA (with Socks)", title: "Nike Air Force 1 Low '07 Off-White MoMA (with Socks) (Size 10.5)" },
+        { name: 'Nike Air Huarache Stussy Dark Olive (2021)', title: 'Nike Air Huarache Stussy Dark Olive (2021) (Size 10.5)' },
+        { name: 'Nike Dunk Low (Wolf Grey)', title: 'Nike Dunk Low (Wolf Grey) (Size 10.5)' }
+      ];
+      for (const tc of cases) {
+        const res = main(kcpInput('10.5M / 12W', { title: tc.name, descriptionHtml: kcpBody({ name: tc.name }) }));
+        assert.equal(res.normalizedTitle, tc.title, `title for ${tc.name}`);
+        assert.ok(!res.importErrors.includes('title-mismatch'), `title-mismatch for ${tc.name}`);
+      }
+    });
+
+    it('accepts Title suffix variants without flagging title-mismatch', () => {
+      const name = "Jordan 1 Retro Low OG SP Travis Scott Olive (Women's)";
+      const titles = [
+        name,
+        `${name} (Pre-Owned)`,
+        `${name} 11.5W (Pre-Owned)`,
+        `${name} Size 11.5W (Pre-Owned)`,
+        `${name} 6.5M/8W (Pre-Owned)`,
+        `${name} 6.5Y (Pre-Owned)`,
+        `${name} 10.5 (Pre-Owned)`,
+        name.toUpperCase(),
+        `${name}  `
+      ];
+      for (const title of titles) {
+        const res = main(kcpInput('10.5M / 12W', { title, descriptionHtml: kcpBody({ name }) }));
+        assert.ok(!res.importErrors.includes('title-mismatch'), `Unexpected title-mismatch for "${title}"`);
+      }
+
+      const modelNumber = main(kcpInput('10.5M / 12W', {
+        title: 'Jordan 1 Retro High Shadow 2.0',
+        descriptionHtml: kcpBody({ name: 'Jordan 1 Retro High Shadow 2.0' })
+      }));
+      assert.ok(!modelNumber.importErrors.includes('title-mismatch'));
+    });
+
+    it('flags title-mismatch when Title and Body name differ', () => {
+      const socks = main(kcpInput('10.5M / 12W', {
+        title: "Nike Air Force 1 Low '07 Off-White MoMA (without Socks) 10.5 (Pre-Owned)",
+        descriptionHtml: kcpBody({ name: "Nike Air Force 1 Low '07 Off-White MoMA (with Socks)" })
+      }));
+      assert.ok(socks.importErrors.includes('title-mismatch'));
+      assert.equal(socks.normalizedTitle, "Nike Air Force 1 Low '07 Off-White MoMA (with Socks) (Size 10.5)");
+
+      const colorway = main(kcpInput('11M / 12.5W', {
+        title: 'Nike Paul Rodriguez 2 Zoom Air Grey Haze/Black 11 (Pre-Owned)',
+        descriptionHtml: kcpBody({ name: 'Nike Paul Rodriguez 2 Zoom Air Black Gold' })
+      }));
+      assert.ok(colorway.importErrors.includes('title-mismatch'));
+    });
+
+    it('flags unknown-title when Body has no name line', () => {
+      const draft = main(kcpInput('10.5M / 12W', {
+        title: 'Pre-Owned Draft dcbe20d7-7af3-402d-b7b0-aadabb71aba7',
+        descriptionHtml: 'SKU: DRAFT-879E47B9<br><br>This is a pre-owned item. All sales are final.'
+      }));
+      assert.equal(draft.normalizedTitle, '');
+      assert.ok(draft.importErrors.includes('unknown-title'));
+      assert.ok(!draft.importErrors.includes('title-mismatch'));
+
+      const legacy = main(kcpInput('9.5', {
+        title: 'Jordan 4 Retro Thunder (2023)',
+        descriptionHtml: 'Release Date: May 13, 2023<br>SKU: DH6927-017-9.5-PO-9<br><br>This is a pre-owned item.'
+      }));
+      assert.equal(legacy.normalizedTitle, '');
+      assert.ok(legacy.importErrors.includes('unknown-title'));
+
+      const emptyBody = main(kcpInput('10.5M / 12W', { descriptionHtml: '' }));
+      assert.ok(emptyBody.importErrors.includes('unknown-title'));
+      assert.ok(emptyBody.importErrors.includes('unknown-condition'));
     });
 
     it('safely handles empty/malformed inputs without throwing exceptions', () => {
@@ -492,7 +637,7 @@ describe('Shopify Importer Unit Tests', () => {
         const res = main({
           productVariant: {
             selectedOptions: [null, { name: 'Size', value: 10.5 }],
-            product: { vendor: 'Kicks Collective PA', category: 'Shoes' }
+            product: { vendor: KCP, productType: 'sneakers' }
           }
         });
         assert.equal(res.normalizedMSize, '10.5');
@@ -504,7 +649,7 @@ describe('Shopify Importer Unit Tests', () => {
         const res = main({
           productVariant: {
             selectedOptions: 'not-an-array',
-            product: { vendor: 'Kicks Collective PA', category: { name: 'Shoes' } }
+            product: { vendor: KCP, productType: 'sneakers' }
           }
         });
         assert.ok(res.importErrors.includes('unknown-size'));
@@ -518,7 +663,7 @@ describe('Shopify Importer Unit Tests', () => {
             { name: '', value: 'Red' },
             { name: 'Size', value: '10M' }
           ],
-          product: { vendor: 'Kicks Collective PA', category: { name: 'Shoes' } }
+          product: { vendor: KCP, productType: 'sneakers' }
         }
       });
       assert.equal(res.normalizedMSize, '10');
@@ -529,7 +674,7 @@ describe('Shopify Importer Unit Tests', () => {
       const res = main({
         productVariant: {
           selectedOptions: [{ name: '', value: '10.5M / 12W' }],
-          product: { vendor: 'Kicks Collective PA', category: { name: 'Shoes' } }
+          product: { vendor: KCP, productType: 'sneakers' }
         }
       });
       assert.equal(res.normalizedMSize, '10.5');
@@ -537,4 +682,3 @@ describe('Shopify Importer Unit Tests', () => {
     });
   });
 });
-

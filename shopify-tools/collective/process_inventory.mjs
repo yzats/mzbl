@@ -57,7 +57,10 @@ function escapeCSVField(val) {
 }
 
 function processInventory() {
-  const csvData = fs.readFileSync('kc-inventory.csv', 'utf8');
+  // Usage: node process_inventory.mjs [input.csv] [output.csv]
+  const inputPath = process.argv[2] || 'kc-inventory.csv';
+  const outputPath = process.argv[3] || 'kc-output.csv';
+  const csvData = fs.readFileSync(inputPath, 'utf8');
   const rows = parseCSV(csvData);
   if (rows.length === 0) return;
 
@@ -87,6 +90,7 @@ function processInventory() {
     'normalizedMSize',
     'normalizedWSize',
     'normalizedCondition',
+    'normalizedConditionNote',
     'normalizedBox',
     'supplierTitle',
     'supplierDescription',
@@ -127,9 +131,7 @@ function processInventory() {
           title: '',
           description: '',
           category: '',
-          productType: '',
-          tags: '',
-          conditionMetafield: ''
+          productType: ''
         };
       }
       if (getVal('Vendor')) productMap[handle].vendor = getVal('Vendor');
@@ -137,10 +139,6 @@ function processInventory() {
       if (getVal('Body (HTML)')) productMap[handle].description = getVal('Body (HTML)');
       if (getVal('Product Category')) productMap[handle].category = getVal('Product Category');
       if (getVal('Type')) productMap[handle].productType = getVal('Type');
-      if (getVal('Tags')) productMap[handle].tags = getVal('Tags');
-      if (getVal('Condition (product.metafields.custom.productcondition)')) {
-        productMap[handle].conditionMetafield = getVal('Condition (product.metafields.custom.productcondition)');
-      }
     }
 
     const parent = (handle && productMap[handle]) ? productMap[handle] : {
@@ -148,9 +146,7 @@ function processInventory() {
       title: getVal('Title'),
       description: getVal('Body (HTML)'),
       category: getVal('Product Category'),
-      productType: getVal('Type'),
-      tags: getVal('Tags'),
-      conditionMetafield: getVal('Condition (product.metafields.custom.productcondition)')
+      productType: getVal('Type')
     };
 
     const selectedOptions = [];
@@ -170,11 +166,9 @@ function processInventory() {
         product: {
           vendor: 'Kicks Collective PA',
           title: parent.title,
-          description: parent.description,
+          descriptionHtml: parent.description,
           category: parent.category ? { name: parent.category } : null,
-          productType: parent.productType,
-          tags: parent.tags || '',
-          conditionMetafield: parent.conditionMetafield || ''
+          productType: parent.productType
         }
       }
     };
@@ -201,6 +195,7 @@ function processInventory() {
       escapeCSVField(result.normalizedMSize),
       escapeCSVField(result.normalizedWSize),
       escapeCSVField(result.normalizedCondition),
+      escapeCSVField(result.normalizedConditionNote),
       escapeCSVField(result.normalizedBox),
       escapeCSVField(result.supplierTitle),
       escapeCSVField(result.supplierDescription),
@@ -215,8 +210,8 @@ function processInventory() {
     outputRows.push(outRow.join(','));
   }
 
-  fs.writeFileSync('kc-output.csv', outputRows.join('\n'), 'utf8');
-  console.log(`Processed ${outputRows.length - 1} variant records -> kc-output.csv`);
+  fs.writeFileSync(outputPath, outputRows.join('\n'), 'utf8');
+  console.log(`Processed ${outputRows.length - 1} variant records -> ${outputPath}`);
 }
 
 processInventory();
