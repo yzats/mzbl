@@ -106,10 +106,12 @@ KCP shoe name (strategy `kcp-body-name`):
 
 - **Source:** Body name line, casing as written (`adidas`, `sacai`, `MoMA`).
 - **Women's qualifier removed** (bracketed, anywhere in the name, case-insensitive): `(Women's)`, `(Womens)`, `(Women)`, `(WMNS)`, `(W)`. Other brackets stay: `(GS)`, `(2021)`, `(with Socks)`, `(A Star Is Born)`.
+- **Trailing size removed** when it has a size marker and is a valid size: `8.5W`, `10.5M`, `6.5Y`, `6.5M/8W`, `Size 10`. A bare number (`Yeezy 500`, `Kobe 6`) or a non-size token (`3M`) stays.
 
 Examples:
 - `Jordan 3 Cool Grey` + Size option `10M / 11.5W` → `Jordan 3 Cool Grey (Size 10)`
 - `Jordan 4 Retro Seafoam (Women's)` + `11.5W` → `Jordan 4 Retro Seafoam (Size 10)`
+- `Jordan 1 Retro Low OG SP Travis Scott Canary (Women's) 8.5W` + `8.5W` → `Jordan 1 Retro Low OG SP Travis Scott Canary (Size 7)`
 - Youth sizes use the converted men's size: `6.5Y` → `(Size 6.5)`
 - Size unknown → shoe name only (the size error is already flagged)
 - **No name line:** empty + `unknown-title` (Draft placeholders, old-format Bodies that start with `Release Date:`).

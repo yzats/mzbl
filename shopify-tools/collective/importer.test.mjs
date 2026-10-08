@@ -574,6 +574,30 @@ describe('Shopify Importer Unit Tests', () => {
       }
     });
 
+    it('removes a trailing size from the Body name and keeps model numbers', () => {
+      const canary = main(kcpInput('8.5W', {
+        title: "Jordan 1 Retro Low OG SP Travis Scott Canary (Women's) 8.5W (Pre-Owned)",
+        descriptionHtml: kcpBody({ name: "Jordan 1 Retro Low OG SP Travis Scott Canary (Women's) 8.5W", size: '8.5W' })
+      }));
+      assert.equal(canary.normalizedTitle, 'Jordan 1 Retro Low OG SP Travis Scott Canary (Size 7)');
+      assert.ok(!canary.importErrors.includes('title-mismatch'));
+
+      const cases = [
+        { name: 'Jordan 1 Retro Low OG SP Travis Scott Mocha Size 10', title: 'Jordan 1 Retro Low OG SP Travis Scott Mocha (Size 10.5)' },
+        { name: 'adidas Yeezy 500 Bone White (2019) 6.5M/8W', title: 'adidas Yeezy 500 Bone White (2019) (Size 10.5)' },
+        { name: 'Jordan 6 Retro Wheat (GS) 6.5Y', title: 'Jordan 6 Retro Wheat (GS) (Size 10.5)' },
+        { name: 'Nike Dunk Low 10.5M', title: 'Nike Dunk Low (Size 10.5)' },
+        { name: 'adidas Yeezy Boost 350 V2 Zyon', title: 'adidas Yeezy Boost 350 V2 Zyon (Size 10.5)' },
+        { name: 'adidas Yeezy 500', title: 'adidas Yeezy 500 (Size 10.5)' },
+        { name: 'Nike Kobe 6', title: 'Nike Kobe 6 (Size 10.5)' },
+        { name: 'Nike Air Force 1 Low 3M', title: 'Nike Air Force 1 Low 3M (Size 10.5)' }
+      ];
+      for (const tc of cases) {
+        const res = main(kcpInput('10.5M / 12W', { title: tc.name, descriptionHtml: kcpBody({ name: tc.name }) }));
+        assert.equal(res.normalizedTitle, tc.title, `title for ${tc.name}`);
+      }
+    });
+
     it('accepts Title suffix variants without flagging title-mismatch', () => {
       const name = "Jordan 1 Retro Low OG SP Travis Scott Olive (Women's)";
       const titles = [

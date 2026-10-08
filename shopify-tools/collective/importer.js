@@ -676,7 +676,8 @@ function resolveKcpBox(raw) {
 }
 
 function kcpShoeName(title, body) {
-  // Shoe name = Body name line as written, minus a women's qualifier.
+  // Shoe name = Body name line as written, minus a women's qualifier and a
+  // trailing size.
   // Title is only used to flag disagreement with the raw name line after
   // removing Title's listing suffix.
   if (!body.name) return { name: '', errors: ['unknown-title'] };
@@ -691,7 +692,21 @@ function kcpShoeName(title, body) {
     }
     if (!matched) errors.push('title-mismatch');
   }
-  return { name: stripWomensQualifier(body.name), errors: errors };
+  return { name: stripTrailingSize(stripWomensQualifier(body.name)), errors: errors };
+}
+
+function stripTrailingSize(name) {
+  // Remove a size at the end of the name; it is re-added from the Size option.
+  //   "…Canary 8.5W"          → "…Canary"
+  //   "…Mocha Size 10"        → "…Mocha"
+  //   "…Bone White 6.5M/8W"   → "…Bone White"
+  // A bare trailing number is part of the model ("Yeezy 500", "Kobe 6"), and
+  // so is a token that is not a valid size ("Air Force 1 3M").
+  var match = name.match(/\s+(?:size\s+)?([0-9]+(?:\.[0-9]+)?\s*[MWYC]?(?:\s*\/\s*[0-9]+(?:\.[0-9]+)?\s*W)?)$/i);
+  if (!match) return name;
+  var hasSizeMarker = /^\s+size\s/i.test(match[0]) || /[MWYC]/i.test(match[1]);
+  if (!hasSizeMarker || resolveSize(match[1]).sizeError) return name;
+  return name.slice(0, match.index).trim();
 }
 
 function stripWomensQualifier(name) {
