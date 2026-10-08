@@ -117,7 +117,7 @@ describe('Shopify Importer Unit Tests', () => {
           productVariant: { product: { category: { name: tc.category }, productType: tc.type } }
         });
         assert.equal(res.normalizedCategory, NORMALIZED_CATEGORY.SNEAKERS, `Expected Sneakers for category="${tc.category}" type="${tc.type}"`);
-        assert.equal(res.normalizedCategoryGid, 'gid://shopify/TaxonomyCategory/aa-sneakers');
+        assert.equal(res.normalizedCategoryGid, 'gid://shopify/TaxonomyCategory/aa-8-8');
       }
     });
 

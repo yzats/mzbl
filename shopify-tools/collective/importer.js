@@ -40,7 +40,7 @@
  *   normalizedDescription     e.g. "Worn (light wear), with box", "Brand New",
  *                             "Worn", "no box", or ""
  *   normalizedCategory        NORMALIZED_CATEGORY.SNEAKERS | ""
- *   normalizedCategoryGid     e.g. "gid://shopify/TaxonomyCategory/aa-sneakers"
+ *   normalizedCategoryGid     e.g. "gid://shopify/TaxonomyCategory/aa-8-8"
  *                             or ""
  *   importErrors              comma-separated codes, e.g. "unknown-size" or
  *                             "child-size,unknown-category" ("" if none)
@@ -79,7 +79,8 @@ var NORMALIZED_CATEGORY = {
 };
 
 var CATEGORY_GIDS = {};
-CATEGORY_GIDS[NORMALIZED_CATEGORY.SNEAKERS] = 'gid://shopify/TaxonomyCategory/aa-sneakers';
+// Shopify Standard Product Taxonomy: Apparel & Accessories > Shoes > Sneakers.
+CATEGORY_GIDS[NORMALIZED_CATEGORY.SNEAKERS] = 'gid://shopify/TaxonomyCategory/aa-8-8';
 
 // Smallest men's size we process; anything below is child-size
 // (3.5Y = men's 3.5 is the first youth size mapped onto adult sizing).

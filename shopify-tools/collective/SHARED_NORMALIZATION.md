@@ -91,7 +91,7 @@ When the supplier gives no box value and the condition is Brand New, `normalized
 
 | Input | Normalized | GID |
 |---|---|---|
-| Category name exact or contains a `CATEGORY_MAP` key (`shoes`, `sneakers`, …) | mapped value | `CATEGORY_GIDS[…]` |
+| Category name exact or contains a `CATEGORY_MAP` key (`shoes`, `sneakers`, …) | mapped value | `CATEGORY_GIDS[…]`, e.g. Sneakers → `gid://shopify/TaxonomyCategory/aa-8-8` |
 | Product type in `PRODUCT_TYPE_MAP` | mapped value | same |
 | Else | empty | *(empty)* — callers may flag `unknown-category` |
 
