@@ -104,7 +104,7 @@ Suppliers with `categorySource: 'product-type'` (KCP) skip the category name and
 `normalizedTitle` = sanitized shoe name + ` (Size {normalizedMSize})`.
 
 - **Shoe name:** supplier-specific (`deriveShoeName` dispatches on the supplier's `shoeName` strategy). It has no size and is already cleaned up, e.g. KCP removes `(Women's)`. Unknown suppliers use Title as-is.
-- **Size suffix:** shared (`buildNormalizedTitle`). Left off when size is unknown (the size error is flagged separately).
+- **Size suffix:** shared (`buildNormalizedTitle`). Added only when the supplier parser marks the listing as single-size (`sizeInTitle`; KCP: Body has `Size:`). Size runs share one product title, so they get the name only. Also left off when size is unknown (the size error is flagged separately).
 
 Example: `Jordan 3 Cool Grey` + `10` → `Jordan 3 Cool Grey (Size 10)`.
 

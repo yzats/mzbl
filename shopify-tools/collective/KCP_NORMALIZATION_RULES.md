@@ -22,7 +22,7 @@ Release Date: 2024-11-23
 ```
 
 - **Name line:** first non-empty line that is not a `Label:` line.
-- **`Size:`:** single-variant listings only.
+- **`Size:`:** single-size listings only (all pre-owned, some New). New size runs (one product, many size variants) omit it.
 - **`Box Condition:`:** pre-owned listings only; New listings omit it.
 - **Labels:** matched case-insensitively at the start of a line. An empty value (`Condition:` with nothing after it) is empty — it never reads the next line.
 
@@ -33,7 +33,8 @@ Release Date: 2024-11-23
 | Field | Rule |
 |---|---|
 | `supplierCode` | Always `KCP` when vendor is Kicks Collective PA |
-| `supplierSku` | Supplier variant SKU as-is |
+| `supplierSku` | Supplier variant SKU as-is: variant metafield `custom.supplier_sku` when set, else `sku` |
+| `supplierTitle` / `supplierDescription` | Product metafields `custom.supplier_title` / `custom.supplier_description` when set, else `title` / `descriptionHtml`. Body parsing and the title check use these. |
 | `newSku` | `KCP-{numericVariantId}` from Shopify GID |
 | Local CSV runner | Forces vendor to `Kicks Collective PA` regardless of brand in the export |
 
@@ -102,6 +103,8 @@ Read Body `Box Condition:` and map with shared `BOX_MAP`:
 
 `normalizedTitle` = KCP shoe name + shared ` (Size {normalizedMSize})` suffix (see [`SHARED_NORMALIZATION.md`](SHARED_NORMALIZATION.md)).
 
+The size suffix is added only when Body has a non-empty `Size:` line (single-size listing). Size runs get the shoe name only, so every variant of the product gets the same title, e.g. `Jordan 12 Retro Field Purple`. Sizes themselves still come from the Size option either way.
+
 KCP shoe name (strategy `kcp-body-name`):
 
 - **Source:** Body name line, casing as written (`adidas`, `sacai`, `MoMA`).
@@ -142,4 +145,4 @@ Type only (`sneakers`, `pre-owned sneakers` → Sneakers via shared `PRODUCT_TYP
 | `title-mismatch` | Title (minus listing suffix) ≠ Body name line |
 | `unknown-category` | Type empty or unmapped |
 
-`hasImportErrors` is true if any code is present.
+`variantImportErrors` lists this variant's codes. `productImportErrors` adds them to the saved `custom.import_errors` codes (no duplicates), so the product collects every variant's errors. `hasVariantImportErrors` / `hasProductImportErrors` are true when the matching list is not empty.

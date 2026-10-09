@@ -13,7 +13,9 @@ This repository processes Shopify inventory exports for **Kicks Collective PA** 
 - **`importer.js`**: Core Shopify Flow / Run Code ES Module (`export default function main(input)`).
   - Shared: `BOX_MAP`, Body reader, size parse/convert, category, title size suffix, description helpers.
   - Per supplier (`SUPPLIERS`): prefix, parser name, shoe-name strategy, category source, option names — plus parser functions and condition vocabulary (e.g. `KCP_CONDITION_MAP`).
-  - Reads only these Flow input fields: `productVariant { id sku selectedOptions { name value } product { vendor title descriptionHtml productType category { name } } }`.
+  - Flow input: `productVariant { id sku supplierSku { value } selectedOptions { name value } product { vendor title descriptionHtml productType category { name } supplierTitle { value } supplierDescription { value } importErrors { value } } }`. `supplierSku` is the variant metafield `custom.supplier_sku`; `supplierTitle`, `supplierDescription`, `importErrors` are product metafields `custom.supplier_title`, `custom.supplier_description`, `custom.import_errors`.
+  - `variantImportErrors` / `hasVariantImportErrors`: this variant's errors. `productImportErrors` / `hasProductImportErrors`: `custom.import_errors` plus this variant's new codes (no duplicates). The workflow writes `productImportErrors` back to `custom.import_errors`, so the product collects every variant's errors. The CSV runner mimics this per handle.
+  - Supplier SKU / title / Body come from those metafields when set, else from `sku` / `title` / `descriptionHtml`. The workflow saves the metafields before overwriting those fields, so every variant run of a product reads the same supplier data.
 - **`process_inventory.mjs`**: Local runner script to process CSV files.
   - Usage: `node process_inventory.mjs [input.csv] [output.csv]`
   - Defaults: `kc-inventory.csv` → `kc-output.csv`

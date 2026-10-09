@@ -18,11 +18,20 @@
  *
  * Each field resolves independently: a size error leaves sizes empty but
  * condition / box / title are still derived. Unresolved values stay empty
- * (never the string "unknown"); problems are reported via importErrors instead.
+ * (never the string "unknown"); problems are reported as error codes instead.
  *
  * Input (Flow Run Code query):
- *   productVariant { id sku selectedOptions { name value }
- *     product { vendor title descriptionHtml productType category { name } } }
+ *   productVariant { id sku supplierSku { value } selectedOptions { name value }
+ *     product { vendor title descriptionHtml productType category { name }
+ *       supplierTitle { value } supplierDescription { value } importErrors { value } } }
+ *
+ * productVariant.supplierSku is the variant metafield custom.supplier_sku;
+ * product.supplierTitle / supplierDescription / importErrors are the product
+ * metafields custom.supplier_title / supplier_description / import_errors.
+ * Supplier SKU / title / Body come from those metafields when set (the
+ * workflow saves them before overwriting sku / title / descriptionHtml), else
+ * from sku / title / descriptionHtml. Every run then reads the same supplier
+ * data.
  *
  * Outputs — derived:
  *   supplierCode              e.g. "KCP"
@@ -36,22 +45,27 @@
  *   normalizedBox             NORMALIZED_BOX.WITH_BOX | NORMALIZED_BOX.DAMAGED_BOX | NORMALIZED_BOX.REPLACEMENT_BOX |
  *                             NORMALIZED_BOX.NO_BOX | NORMALIZED_BOX.WITH_BOX_MISSING_LID | ""
  *   normalizedTitle           sanitized shoe name (per supplier) + " (Size {normalizedMSize})"
- *                             when size is known, e.g. "Jordan 3 Cool Grey (Size 10)"
+ *                             for single-size listings with a known size,
+ *                             e.g. "Jordan 3 Cool Grey (Size 10)"; size runs get the name only
  *   normalizedDescription     e.g. "Worn (light wear), with box", "Brand New",
  *                             "Worn", "no box", or ""
  *   normalizedCategory        NORMALIZED_CATEGORY.SNEAKERS | ""
  *   normalizedCategoryGid     e.g. "gid://shopify/TaxonomyCategory/aa-8-8"
  *                             or ""
- *   importErrors              comma-separated codes, e.g. "unknown-size" or
+ *   variantImportErrors       this variant's comma-separated codes, e.g. "unknown-size" or
  *                             "child-size,unknown-category" ("" if none)
- *   hasImportErrors           true | false
+ *   hasVariantImportErrors    true | false (variantImportErrors is not empty)
+ *   productImportErrors       custom.import_errors plus this variant's new codes, no
+ *                             duplicates ("" if none). Write back to custom.import_errors so
+ *                             the product collects every variant's errors.
+ *   hasProductImportErrors    true | false (productImportErrors is not empty)
  *
  * Outputs — supplier (copied):
- *   supplierSku               supplier variant SKU as-is
- *   supplierTitle             product title as-is
- *   supplierDescription       product Body (HTML) as-is
+ *   supplierSku               supplier variant SKU as-is (custom.supplier_sku or sku)
+ *   supplierTitle             product title as-is (custom.supplier_title or title)
+ *   supplierDescription       product Body (HTML) as-is (custom.supplier_description or descriptionHtml)
  *
- * importErrors may include: unknown-supplier, child-size, unknown-size,
+ * Error codes: unknown-supplier, child-size, unknown-size,
  * inconsistent-size, size-mismatch, unknown-condition, unknown-box,
  * unknown-title, title-mismatch, unknown-category.
  */
@@ -166,11 +180,12 @@ export default function main(input) {
   // e.g., KCP-4521987654321
   var newSku = supplierCode + '-' + variantId;
 
-  // Capture the supplier's SKU as-is for reference
-  var supplierSku = productVariant.sku || '';
-
-  var supplierTitle = product.title || '';
-  var supplierDescription = product.descriptionHtml || '';
+  // Supplier originals: the saved metafield copy wins, because the workflow
+  // overwrites sku / title / descriptionHtml after the first run. Before the
+  // copy is saved, the live field still holds the supplier's value.
+  var supplierSku = metafieldValue(productVariant.supplierSku) || productVariant.sku || '';
+  var supplierTitle = metafieldValue(product.supplierTitle) || product.title || '';
+  var supplierDescription = metafieldValue(product.supplierDescription) || product.descriptionHtml || '';
   var body = parseBody(supplierDescription);
 
   // Supplier parsing is isolated here so future suppliers can differ without
@@ -183,9 +198,12 @@ export default function main(input) {
     : blankDetails();
   parsedDetails.normalizedBox = defaultBox(parsedDetails);
 
-  // Title = supplier-specific sanitized shoe name + shared size suffix.
+  // Title = supplier-specific sanitized shoe name + shared size suffix. The
+  // parser decides whether the listing is a single size (sizeInTitle); size
+  // runs share one product title, so they get the name only.
   var shoeName = deriveShoeName(supplier, supplierTitle, body);
-  var normalizedTitle = buildNormalizedTitle(shoeName.name, parsedDetails.normalizedMSize);
+  var titleSize = parsedDetails.sizeInTitle ? parsedDetails.normalizedMSize : '';
+  var normalizedTitle = buildNormalizedTitle(shoeName.name, titleSize);
 
   // Category is product-level; size/condition/box are variant-level metafields.
   var categoryInput = supplier && supplier.categorySource === 'product-type' ? null : product.category;
@@ -194,9 +212,16 @@ export default function main(input) {
   // Description format is shared and product-type based (not supplier-based).
   var normalizedDescription = normalizeDescription(parsedDetails, normalizedCategory);
 
-  // A comma-separated error string is easier to pass through Shopify Flow than
-  // an array, while hasImportErrors remains convenient for conditions.
-  var importErrors = collectImportErrors(supplier, parsedDetails, shoeName.errors, normalizedCategory);
+  // Comma-separated error strings are easier to pass through Shopify Flow than
+  // arrays; the has* booleans are convenient for conditions.
+  var variantImportErrors = collectImportErrors(supplier, parsedDetails, shoeName.errors, normalizedCategory);
+
+  // Product errors accumulate across variant runs: the saved
+  // custom.import_errors codes plus any new codes from this variant.
+  var productImportErrors = mergeErrorCodes(
+    parseErrorCodes(metafieldValue(product.importErrors)),
+    variantImportErrors
+  );
 
   // Keep this return shape aligned with the Run code output schema in Shopify.
   return {
@@ -215,8 +240,10 @@ export default function main(input) {
     normalizedDescription: normalizedDescription,
     normalizedCategory: normalizedCategory,
     normalizedCategoryGid: normalizedCategoryGid,
-    importErrors: importErrors.join(','),
-    hasImportErrors: importErrors.length > 0
+    variantImportErrors: variantImportErrors.join(','),
+    hasVariantImportErrors: variantImportErrors.length > 0,
+    productImportErrors: productImportErrors.join(','),
+    hasProductImportErrors: productImportErrors.length > 0
   };
 }
 
@@ -571,6 +598,36 @@ function normalizeKey(value) {
   return (value || '').toString().trim().toLowerCase();
 }
 
+function parseErrorCodes(text) {
+  // "a,b" → ["a", "b"]. A list metafield's JSON array ('["a","b"]') also works.
+  var value = (text || '').trim();
+  if (!value) return [];
+  if (value.charAt(0) === '[') {
+    try {
+      var list = JSON.parse(value);
+      if (Array.isArray(list)) value = list.join(',');
+    } catch (e) {
+      // Not JSON; read as comma-separated.
+    }
+  }
+  return value.split(',').map(function (code) { return code.trim(); }).filter(Boolean);
+}
+
+function mergeErrorCodes(existing, added) {
+  // Keep existing order; append each new code once.
+  var merged = [];
+  existing.concat(added).forEach(function (code) {
+    if (merged.indexOf(code) === -1) merged.push(code);
+  });
+  return merged;
+}
+
+function metafieldValue(metafield) {
+  // Flow returns null for an unset metafield; whitespace-only counts as unset.
+  var value = metafield && metafield.value != null ? metafield.value.toString() : '';
+  return value.trim() ? value : '';
+}
+
 function blankDetails() {
   // Unknown supplier or parser: nothing can be parsed.
   return {
@@ -579,6 +636,7 @@ function blankDetails() {
     normalizedCondition: '',
     normalizedConditionNote: '',
     normalizedBox: '',
+    sizeInTitle: false,
     sizeError: 'unknown-size',
     sizeCheckError: '',
     conditionError: '',
@@ -606,7 +664,7 @@ function parseKcpBody(supplier, selectedOptions, body) {
   // else from the Body template:
   //   <name>
   //   SKU: CP9652
-  //   Size: 10.5M / 12W            (single-variant listings only)
+  //   Size: 10.5M / 12W            (single-size listings only; size runs omit it)
   //   Condition: Moderately Worn (yellowing on the soles)
   //   Box Condition: Original Box  (pre-owned listings only)
   //   Release Date: 2017-02-11
@@ -631,6 +689,8 @@ function parseKcpBody(supplier, selectedOptions, body) {
     normalizedCondition: condition.normalizedCondition,
     normalizedConditionNote: condition.normalizedConditionNote,
     normalizedBox: box.normalizedBox,
+    // Only single-size listings carry Body "Size:"; size runs get no title size.
+    sizeInTitle: !!body.fields['size'],
     sizeError: sizes.sizeError,
     sizeCheckError: sizeCheckError,
     conditionError: condition.conditionError,

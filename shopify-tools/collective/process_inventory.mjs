@@ -98,8 +98,10 @@ function processInventory() {
     'normalizedDescription',
     'normalizedCategory',
     'normalizedCategoryGid',
-    'importErrors',
-    'hasImportErrors'
+    'variantImportErrors',
+    'hasVariantImportErrors',
+    'productImportErrors',
+    'hasProductImportErrors'
   ];
 
   const outputRows = [outputHeaders.map(escapeCSVField).join(',')];
@@ -131,7 +133,8 @@ function processInventory() {
           title: '',
           description: '',
           category: '',
-          productType: ''
+          productType: '',
+          importErrors: ''
         };
       }
       if (getVal('Vendor')) productMap[handle].vendor = getVal('Vendor');
@@ -168,12 +171,15 @@ function processInventory() {
           title: parent.title,
           descriptionHtml: parent.description,
           category: parent.category ? { name: parent.category } : null,
-          productType: parent.productType
+          productType: parent.productType,
+          // Mirrors Flow writing productImportErrors back to custom.import_errors.
+          importErrors: parent.importErrors ? { value: parent.importErrors } : null
         }
       }
     };
 
     const result = main(input);
+    parent.importErrors = result.productImportErrors;
 
     const outRow = [
       escapeCSVField(handle),
@@ -203,8 +209,10 @@ function processInventory() {
       escapeCSVField(result.normalizedDescription),
       escapeCSVField(result.normalizedCategory),
       escapeCSVField(result.normalizedCategoryGid),
-      escapeCSVField(result.importErrors),
-      escapeCSVField(result.hasImportErrors)
+      escapeCSVField(result.variantImportErrors),
+      escapeCSVField(result.hasVariantImportErrors),
+      escapeCSVField(result.productImportErrors),
+      escapeCSVField(result.hasProductImportErrors)
     ];
 
     outputRows.push(outRow.join(','));
