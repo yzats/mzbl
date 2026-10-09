@@ -599,18 +599,8 @@ function normalizeKey(value) {
 }
 
 function parseErrorCodes(text) {
-  // "a,b" → ["a", "b"]. A list metafield's JSON array ('["a","b"]') also works.
-  var value = (text || '').trim();
-  if (!value) return [];
-  if (value.charAt(0) === '[') {
-    try {
-      var list = JSON.parse(value);
-      if (Array.isArray(list)) value = list.join(',');
-    } catch (e) {
-      // Not JSON; read as comma-separated.
-    }
-  }
-  return value.split(',').map(function (code) { return code.trim(); }).filter(Boolean);
+  // "a,b" → ["a", "b"]; the same comma-separated format productImportErrors writes.
+  return (text || '').split(',').map(function (code) { return code.trim(); }).filter(Boolean);
 }
 
 function mergeErrorCodes(existing, added) {

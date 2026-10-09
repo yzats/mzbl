@@ -528,9 +528,6 @@ describe('Shopify Importer Unit Tests', () => {
 
       const tidies = withSaved(' child-size , ,unknown-size ', 'Default Title');
       assert.equal(tidies.productImportErrors, 'child-size,unknown-size');
-
-      const jsonList = withSaved('["child-size","size-mismatch"]', '14M/12.5W');
-      assert.equal(jsonList.productImportErrors, 'child-size,size-mismatch,inconsistent-size');
     });
 
     it('reads only descriptionHtml, not description', () => {
