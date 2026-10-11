@@ -230,7 +230,6 @@ describe('Shopify Importer Unit Tests', () => {
       const unknownSizeInputs = [
         { name: 'Size', value: '10-5-m-11-5-w' },
         { name: 'Size', value: 'copyt:temporary:size' },
-        { name: 'Size', value: '10M - Brand New - No Box' },
         { name: 'Title', value: 'Default Title' }
       ];
 
@@ -281,6 +280,29 @@ describe('Shopify Importer Unit Tests', () => {
       const blankOptName = main(createInput('', '10.5M/12W'));
       assert.equal(blankOptName.normalizedMSize, '10.5');
       assert.equal(blankOptName.normalizedWSize, '12');
+    });
+
+    it('ignores a condition appended to the KCP Size option', () => {
+      const cases = [
+        { option: '15M/16.5W - Brand New', m: '15', w: '16.5' },
+        { option: '10M/11.5W - Brand New', m: '10', w: '11.5' },
+        { option: 'EU44 - Brand New', m: '11', w: '13' },
+        { option: '12M / 13.5W - Pre-Owned', m: '12', w: '13.5' },
+        { option: '10M - Brand New - No Box', m: '10', w: '11.5' }
+      ];
+      for (const tc of cases) {
+        const res = main(kcpInput(tc.option, {
+          title: 'Jordan 3 Retro Black Cement (2011) 15',
+          descriptionHtml: kcpBody({ name: 'Jordan 3 Retro Black Cement (2011)', size: null, condition: 'New', box: null })
+        }));
+        assert.equal(res.normalizedMSize, tc.m, tc.option);
+        assert.equal(res.normalizedWSize, tc.w, tc.option);
+        assert.equal(res.normalizedCondition, NORMALIZED_CONDITION.BRAND_NEW, tc.option);
+        assert.equal(res.variantImportErrors, '', tc.option);
+      }
+
+      const childWithCondition = main(kcpInput('3Y - Brand New', { descriptionHtml: kcpBody({ size: null, condition: 'New' }) }));
+      assert.ok(childWithCondition.variantImportErrors.includes('child-size'));
     });
 
     it('flags size-mismatch when Body Size disagrees with the Size option', () => {

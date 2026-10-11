@@ -44,7 +44,7 @@ Release Date: 2024-11-23
 
 ## Size → `normalizedMSize`, `normalizedWSize`
 
-1. Read the Size option value and pass it to the shared `resolveSize`. A trailing `(…)` note such as `(No Box)` is ignored.
+1. Read the Size option value and pass it to the shared `resolveSize`. A trailing `(…)` note such as `(No Box)` is ignored. An appended condition in the older option format is dropped first, e.g. `15M/16.5W - Brand New` → `15M/16.5W`. Condition still comes from Body.
 2. On a size error (`child-size`, `unknown-size` or `inconsistent-size`, shared rules) both sizes stay empty. Condition, box and title are still read from Body.
 3. If Body has `Size:` and it parses to different M/W than the option → `size-mismatch`. Sizes still come from the option. An unparseable Body size is ignored, and the check is skipped when the option size already failed.
 

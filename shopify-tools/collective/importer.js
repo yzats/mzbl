@@ -659,7 +659,7 @@ function parseKcpBody(supplier, selectedOptions, body) {
   //   Box Condition: Original Box  (pre-owned listings only)
   //   Release Date: 2017-02-11
   var sizeOption = findOption(selectedOptions, supplier.sizeOptionNames || ['Size']);
-  var sizeText = sizeOption ? optionValueText(sizeOption.value) : '';
+  var sizeText = stripKcpOptionCondition(sizeOption ? optionValueText(sizeOption.value) : '');
   // Size errors leave sizes empty but do not stop condition/box.
   var sizes = resolveSize(sizeText);
 
@@ -686,6 +686,12 @@ function parseKcpBody(supplier, selectedOptions, body) {
     conditionError: condition.conditionError,
     boxError: box.boxError
   };
+}
+
+function stripKcpOptionCondition(sizeText) {
+  // Older KCP size options append the condition, e.g. "15M/16.5W - Brand New"
+  // → "15M/16.5W", "EU44 - Brand New" → "EU44". Condition still comes from Body.
+  return sizeText.replace(/\s+-\s+[A-Za-z][^\/]*$/, '');
 }
 
 function resolveKcpCondition(raw) {
